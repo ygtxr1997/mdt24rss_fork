@@ -26,7 +26,7 @@ from mdt.utils.utils import (
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(config_path="../conf", config_name="config")
+@hydra.main(config_path="../conf", config_name="config_abcd_hk")
 # @hydra.main(config_path="../logs/runs/2023-09-10/17-52-50/.hydra", config_name="config")
 def train(cfg: DictConfig) -> None:
     """
@@ -177,8 +177,9 @@ if __name__ == "__main__":
 
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4" 
+    os.environ["CUDA_VISIBLE_DEVICES"] = "5,6"
     print(torch.cuda.is_available())
     print(torch.cuda.device_count())
     os.environ["TOKENIZERS_PARALLELISM"] = 'True'
+    os.environ["WANDB__SERVICE_WAIT"] = "300"  # alleviate ServiceStartTimeoutError
     train()
