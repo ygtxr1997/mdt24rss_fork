@@ -18,7 +18,7 @@ future_range: 29
 seed: 242
 device: 'cuda'
 batch_size: 128 # 38 # 128
-devices: 2
+devices: 4
 goal_window_size: 1
 act_dim: 7
 obs_dim: 384

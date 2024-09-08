@@ -63,17 +63,23 @@ def get_checkpoints_for_epochs(experiment_folder: Path, epochs: Union[List, str]
 
 def get_all_checkpoints(experiment_folder: Path) -> List:
     if experiment_folder.is_dir():
+        print('[DEBUG] experiment_folder.is_dir()')
         checkpoint_folder = experiment_folder / "saved_models"
         if checkpoint_folder.is_dir():
+            print('[DEBUG] checkpoint_folder.is_dir()')
             checkpoints = sorted(Path(checkpoint_folder).iterdir(), key=lambda chk: chk.stat().st_mtime)
+            print('[DEBUG] checkpoints.len:', len(checkpoints))
             if len(checkpoints):
+                print('[DEBUG] checkpoints:', checkpoints)
                 return [chk for chk in checkpoints if chk.suffix == ".ckpt"]
     return []
 
 
 def get_last_checkpoint(experiment_folder: Path) -> Union[Path, None]:
     # return newest checkpoint according to creation time
+    print('[DEBUG] experiment_folder:', experiment_folder)
     checkpoints = get_all_checkpoints(experiment_folder)
+    print('[DEBUG] checkpoints:', checkpoints)
     if len(checkpoints):
         return checkpoints[-1]
     return None

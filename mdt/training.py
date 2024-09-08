@@ -26,7 +26,7 @@ from mdt.utils.utils import (
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(config_path="../conf", config_name="config_abcd_hk")
+@hydra.main(config_path="../conf", config_name="config_abc_hk")
 # @hydra.main(config_path="../logs/runs/2023-09-10/17-52-50/.hydra", config_name="config")
 def train(cfg: DictConfig) -> None:
     """
@@ -41,7 +41,7 @@ def train(cfg: DictConfig) -> None:
     log_rank_0(f"Seed for training: {cfg.seed}")
     # new added
     torch.set_float32_matmul_precision('medium')
-    
+
     datamodule = hydra.utils.instantiate(cfg.datamodule)
     chk = get_last_checkpoint(Path.cwd())
     # chk = get_last_checkpoint(Path('/home/temp_store/code/calvin_d/logs/runs/2023-09-10/17-52-50/saved_models/epoch=09_eval_lh/avg_seq_len=2.62.ckpt'))
@@ -177,7 +177,7 @@ if __name__ == "__main__":
 
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = "5,6"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "5,6"
     print(torch.cuda.is_available())
     print(torch.cuda.device_count())
     os.environ["TOKENIZERS_PARALLELISM"] = 'True'

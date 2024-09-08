@@ -220,7 +220,7 @@ def rollout(env, model, task_oracle, cfg, subtask, lang_embeddings, val_annotati
     return False
 
 
-@hydra.main(config_path="../../conf", config_name="mdt_evaluate")
+@hydra.main(config_path="../../conf", config_name="mdt_evaluate_hk")
 def main(cfg):
     log_wandb = cfg.log_wandb
     torch.cuda.set_device(cfg.device)
@@ -276,7 +276,7 @@ def main(cfg):
 
 
 if __name__ == "__main__":
-    os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo"
+    # os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo"
     # Set CUDA device IDs
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
