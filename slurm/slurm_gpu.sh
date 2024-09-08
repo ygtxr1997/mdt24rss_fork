@@ -13,8 +13,6 @@ set -x -e
 
 export PYTHONPATH=${PWD}
 
-wandb offline
-
 # Add task here
 srun --jobid $SLURM_JOBID bash -c 'bash slurm/sh_train.sh'
 
