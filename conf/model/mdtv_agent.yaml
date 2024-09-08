@@ -32,7 +32,7 @@ perceiver_num_time_embeds: 1
 perceiver_dim: 384
 num_latents: 3
 
-voltron_cache: /home/geyuan/pretrained
+voltron_cache: ${root_home}/pretrained
 
 optimizer:
   _target_: torch.optim.AdamW
