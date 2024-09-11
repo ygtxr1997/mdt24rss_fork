@@ -83,8 +83,12 @@ class HulcDataModule(pl.LightningDataModule):
             val_shm_lookup = val_shmem_loader.load_data_in_shared_memory()
 
             save_shm_lookup(train_shm_lookup, val_shm_lookup)
+        print('[DEBUG] HulcDataModule prepare_data finished.')
 
     def setup(self, stage=None):
+        """
+        Called by trainer.fit()
+        """
         transforms = load_dataset_statistics(self.training_dir, self.val_dir, self.transforms)
 
         # self.train_transforms = {
@@ -132,6 +136,7 @@ class HulcDataModule(pl.LightningDataModule):
                 self.train_datasets[key] = train_dataset
                 self.val_datasets[key] = val_dataset
                 self.modalities.append(key)
+        print('[DEBUG] HulcDataModule setup finished.')
 
     def train_dataloader(self):
         return {

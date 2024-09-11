@@ -3,6 +3,8 @@ from pathlib import Path
 import sys
 from typing import List, Union
 import os
+
+import numpy as np
 import wandb
 
 # This is for using the locally installed repo clone when using slurm
@@ -24,10 +26,49 @@ from mdt.utils.utils import (
 )
 
 
+def print_leaf(prefix, x):
+    if isinstance(x, str):
+        print(f'{prefix}:{type(x)},len={len(x)}')
+    elif isinstance(x, torch.Tensor) or isinstance(x, np.ndarray):
+        print(f'{prefix},{type(x)},shape={x.shape}')
+
+
+def print_batch(prefix, x, depth=0):
+    if isinstance(x, str):
+        print_leaf(prefix, x)
+        return
+    elif isinstance(x, torch.Tensor) or isinstance(x, np.ndarray):
+        print_leaf(prefix, x)
+        return
+    elif isinstance(x, dict):
+        print(f'{prefix}:Dict,keys={x.keys()}')
+        for k, v in x.items():
+            if isinstance(v, torch.Tensor) or isinstance(v, np.ndarray):
+                print_leaf(('-' * depth) + k, v)
+            else:
+                print_batch(('-' * depth) + k, v, depth + 1)
+    elif isinstance(x, list):
+        print(f'List,len={len(x)},elem:{type(x[0])}')
+        if isinstance(x[0], torch.Tensor) or isinstance(x[0], np.ndarray):
+            print_batch(('-' * depth) + '[0]', x[0], depth + 1)
+    else:
+        raise TypeError(f'type {type(x)} not supported. x must be torch.Tensor or list or dict')
+
+
 @hydra.main(config_path="../conf", config_name="config_abc_hk")
 def main(cfg: DictConfig) -> None:
     datamodule = hydra.utils.instantiate(cfg.datamodule)
-    print('datamodule loaded')
+    print('[DEBUG] datamodule loaded')
+    datamodule.setup()
+
+    for dataset_key, loader in datamodule.train_dataloader().items():
+        print(('=' * 20) + f' Dataset {dataset_key} ' + ('=' * 20))
+        for idx, example in enumerate(loader):
+            if idx >= 20:
+                break
+            else:
+                print_batch(f'Batch@{idx}th', example)
+            print(('-' * 20) + ' Batch End ' + ('-' * 20))
 
 
 if __name__ == "__main__":
