@@ -1,5 +1,5 @@
 defaults:
-  - datasets: vision_lang_calvin
+  - datasets: litdata_vl_calvin
   - transforms: calvin_transforms 
 _target_: mdt.datasets.hulc_data_module.HulcDataModule
 _recursive_: false

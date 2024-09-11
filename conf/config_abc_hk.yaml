@@ -5,12 +5,14 @@ defaults:
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
-root_data_dir: /home/geyuan/code/mdt24rss_fork/dataset/task_ABC_D
+root_home: /home/geyuan
+root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_ABC_D
+lit_data_root: ${root_home}/datasets/CALVIN/dataset/litdata/
 lang_folder: lang_clip_resnet50
 vis_clip_model_name: ViT-B/16
 clip_lang_model_name: ViT-B/32
 
-log_dir: /home/geyuan/code/mdt24rss_fork/logs
+log_dir: ${root_home}/code/mdt24rss_fork/logs
 slurm: false
 min_window_size: 21 # 21
 max_window_size: 50
