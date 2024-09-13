@@ -201,6 +201,32 @@ class ClearDataset(Dataset):
 
         episode = self._load_episode(idx, window_size)
 
+        '''
+        before: Dict,keys=dict_keys(['rel_actions', 'language', 'rgb_gripper', 'scene_obs', 'rgb_static', 'language_text', 'robot_obs', 'gen_static', 'gen_gripper', 'future_frame_diff'])
+        rel_actions,<class 'numpy.ndarray'>,shape=(10, 7)                                                                                                                                                                                                                                                                            
+        language,<class 'numpy.ndarray'>,shape=(1024,)                                                                                                                                                                                                                                                                               
+        rgb_gripper,<class 'numpy.ndarray'>,shape=(2, 84, 84, 3)
+        scene_obs,<class 'numpy.ndarray'>,shape=(2, 24)         
+        rgb_static,<class 'numpy.ndarray'>,shape=(2, 200, 200, 3)
+        language_text:<class 'str'>,len=30                       
+        robot_obs,<class 'numpy.ndarray'>,shape=(2, 15)                                                                                                                                                                                                                                                                              
+        gen_static,<class 'numpy.ndarray'>,shape=(200, 200, 3)
+        gen_gripper,<class 'numpy.ndarray'>,shape=(84, 84, 3) 
+        future_frame_diff,<class 'numpy.ndarray'>,shape=(), 3  
+        
+        after process: Dict,keys=dict_keys(['rel_actions', 'language', 'rgb_gripper', 'scene_obs', 'rgb_static', 'language_text', 'robot_obs', 'gen_static', 'gen_gripper', 'future_frame_diff'])
+        rel_actions,<class 'numpy.ndarray'>,shape=(10, 7)                                                                                                                                                                                                                                                                            
+        language,<class 'numpy.ndarray'>,shape=(1024,)        
+        rgb_gripper,<class 'numpy.ndarray'>,shape=(2, 84, 84, 3) 
+        scene_obs,<class 'numpy.ndarray'>,shape=(2, 24)       
+        rgb_static,<class 'numpy.ndarray'>,shape=(2, 200, 200, 3)                                                                                                                                                                                                                                                                    
+        language_text:<class 'str'>,len=37                   
+        robot_obs,<class 'numpy.ndarray'>,shape=(2, 15)         
+        gen_static,<class 'numpy.ndarray'>,shape=(200, 200, 3)                                                                                                                                                                                                                                                                       
+        gen_gripper,<class 'numpy.ndarray'>,shape=(84, 84, 3)                                                                                                         
+        future_frame_diff,<class 'numpy.ndarray'>,shape=(), 3   
+        '''
+
         seq_state_obs = process_state(episode, self.observation_space, self.transforms, self.proprio_state)
         seq_rgb_obs = process_rgb(episode, self.observation_space, self.transforms)
         seq_depth_obs = process_depth(episode, self.observation_space, self.transforms)
@@ -211,6 +237,60 @@ class ClearDataset(Dataset):
         seq_dict = {**seq_state_obs, **seq_rgb_obs, **seq_depth_obs, **seq_acts, **info, **seq_lang}  # type:ignore
         seq_dict["idx"] = idx  # type:ignore
         seq_dict['future_frame_diff'] = episode['future_frame_diff']
+
+        '''
+        seq_dict: Dict,keys=dict_keys(['robot_obs', 'rgb_obs', 'depth_obs', 'actions', 'state_info', 'lang', 'idx', 'future_frame_diff'])                                                                                                                                                                                    
+        robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 8])                                                                                                                                                                                                                                                                    
+        rgb_obs: Dict,keys=dict_keys(['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper'])                                                                      
+        -rgb_static,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 224, 224])                                                                                                                                                                                                                                                        
+        -rgb_gripper,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 84, 84])                                                                                                                                                                                                                                                         
+        -gen_static,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])                                                                                                                                                                                                                                                        
+        -gen_gripper,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])                                                                                                                                                                                                                                                       
+        depth_obs: Dict,keys=dict_keys([])                                                                                                                                                                                                                                                                                           
+        actions,<class 'torch.Tensor'>,shape=torch.Size([10, 7])                                                                                                                                                                                                                                                                     
+        state_info: Dict,keys=dict_keys(['robot_obs', 'scene_obs'])                                                                                                                                                                                                                                                                  
+        -robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 15])                                                                                                                                                                                                                                                                  
+        -scene_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 24])                                                                                                   
+        lang,<class 'torch.Tensor'>,shape=torch.Size([0])                                                                                                                                                                                                                                                                            
+        idx:<class 'int'>,2563                                                                                                                                        
+        future_frame_diff,<class 'numpy.ndarray'>,shape=(), 3   
+        '''
+
+        '''
+        VIS: Dict,keys=dict_keys(['robot_obs', 'rgb_obs', 'depth_obs', 'actions', 'state_info', 'lang', 'idx', 'future_frame_diff'])
+        robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 8])
+        rgb_obs:Dict,keys=dict_keys(['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper'])
+        -rgb_static,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 224, 224])
+        -rgb_gripper,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 84, 84])
+        -gen_static,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])
+        -gen_gripper,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])
+        depth_obs:Dict,keys=dict_keys([])
+        actions,<class 'torch.Tensor'>,shape=torch.Size([10, 7])
+        state_info:Dict,keys=dict_keys(['robot_obs', 'scene_obs'])
+        -robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 15])
+        -scene_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 24])
+        lang,<class 'torch.Tensor'>,shape=torch.Size([0])
+        idx:<class 'int'>,0
+        future_frame_diff,<class 'numpy.ndarray'>,shape=(), 3
+
+        Lang batch: Dict,keys=dict_keys(['robot_obs', 'rgb_obs', 'depth_obs', 'actions', 'state_info', 'use_for_aux_lang_loss', 'lang', 'lang_text', 'idx', 'future_frame_diff'])
+        robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 8])
+        rgb_obs: Dict,keys=dict_keys(['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper'])
+        -rgb_static,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 224, 224])
+        -rgb_gripper,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 84, 84])
+        -gen_static,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])
+        -gen_gripper,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])
+        depth_obs: Dict,keys=dict_keys([])
+        actions,<class 'torch.Tensor'>,shape=torch.Size([10, 7])
+        state_info: Dict,keys=dict_keys(['robot_obs', 'scene_obs'])
+        -robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 15])
+        -scene_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 24])
+        use_for_aux_lang_loss:<class 'bool'>,False
+        lang,<class 'torch.Tensor'>,shape=torch.Size([1024])
+        lang_text:<class 'str'>,len=30
+        idx:<class 'int'>,0
+        future_frame_diff,<class 'numpy.ndarray'>,shape=(), 3
+        '''
         return seq_dict
 
     def _get_window_size(self, idx: int) -> int:
@@ -438,8 +518,7 @@ class ClearDataset(Dataset):
         keys = list(chain(*self.observation_space.values()))
         keys.remove("language")
         keys.append("scene_obs")
-        # print('[DEBUG] ep_start_end:', start_idx, '-', end_idx, f'={end_idx-start_idx}')
-        # print('[DEBUG] _get_episode_name:', [self._get_episode_name(file_idx) for file_idx in range(start_idx, end_idx)])
+        # keys:['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper', 'robot_obs', 'rel_actions', 'scene_obs']
         episodes = [self.load_file(self._get_episode_name(file_idx)) for file_idx in range(start_idx, end_idx)]
 
         # Modify the episode dict to only include the specified sequence lengths
@@ -449,11 +528,22 @@ class ClearDataset(Dataset):
             img_gen_frame_diff = self.img_gen_frame_diff
 
         episode = {}
+        ''' 
+        1. Read from [start,end]
+        rel_actions, rgb_static, rgb_gripper, robot_obs, scene_obs 
+            episode[rel_actions]: (10, 7), [0:10,...]
+            episode[rgb_static]: (1, 200, 200, 3), [:1,...]
+            episode[rgb_gripper]: (1, 84, 84, 3), [:1,...]
+            episode[robot_obs]: (1, 15), [:1,...]
+            episode[scene_obs]: (1, 24), [:1,...]
+            gen_img_static: (1, 200, 200, 3), [3,...]
+            gen_img_gripper: (1, 84, 84, 3), [3,...]
+        '''
         for key in keys:
             if 'gen' in key:
                 continue
 
-            stacked_data = np.stack([ep[key] for ep in episodes])
+            stacked_data = np.stack([ep[key] for ep in episodes])  # len=${act_seq_len},eg.10
             if key == "rel_actions" or key == 'actions':
                 episode[key] = stacked_data[(self.obs_seq_len - 1):((self.obs_seq_len - 1) + self.action_seq_len), :]
             else:
@@ -467,17 +557,24 @@ class ClearDataset(Dataset):
             episode["language"] = self.lang_ann[self.lang_lookup[idx]][0]  # TODO check  [0]
             episode["language_text"] = self.lang_text[self.lang_lookup[idx]]  # [0]  # TODO check  [0]
 
+        '''
+        2. Read from [goal-obs,goal]
+        rgb_static, rgb_gripper, robot_obs, scene_obs
+            goal_episode[rgb_static]: (1, 200, 200, 3), [:1,...]
+            goal_episode[rgb_gripper]: (1, 84, 84, 3), [:1,...]
+            goal_episode[robot_obs]: (1, 15), [:1,...]
+            goal_episode[scene_obs]: (1, 24), [:1,...]
+        '''
         # get the random future state as goal
         goal_idx = end_idx + window_size
         # print(start_idx, end_idx, goal_idx)
         eps_start_idx, eps_end_idx = self.find_sequence_boundaries(end_idx)
 
         # Check if future goal can be sampled
-
         if eps_end_idx < goal_idx:
             goal_idx = eps_end_idx
 
-        goal_episodes = self.load_file(self._get_episode_name(goal_idx))
+        goal_episodes = self.load_file(self._get_episode_name(goal_idx))  # should load [goal_idx-obs_len:goal_idx]
         goal_episode = {}
         for key in keys:
             if 'gen' in key:
@@ -489,45 +586,13 @@ class ClearDataset(Dataset):
                 goal_episode[key] = goal_stacked_data[:self.obs_seq_len, :]
         # store for merging
 
+        '''
+        3. Merge "obs" and "goal", append "gen"
+        '''
         episode = self.merge_episodes(episode, goal_episode)
         episode['gen_static'] = gen_img_static
         episode['gen_gripper'] = gen_img_gripper
         episode['future_frame_diff'] = np.array(img_gen_frame_diff)
-        '''
-        VIS: Dict,keys=dict_keys(['robot_obs', 'rgb_obs', 'depth_obs', 'actions', 'state_info', 'lang', 'idx', 'future_frame_diff'])
-        robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 8])
-        rgb_obs:Dict,keys=dict_keys(['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper'])
-        -rgb_static,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 224, 224])
-        -rgb_gripper,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 84, 84])
-        -gen_static,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])
-        -gen_gripper,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])
-        depth_obs:Dict,keys=dict_keys([])
-        actions,<class 'torch.Tensor'>,shape=torch.Size([10, 7])
-        state_info:Dict,keys=dict_keys(['robot_obs', 'scene_obs'])
-        -robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 15])
-        -scene_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 24])
-        lang,<class 'torch.Tensor'>,shape=torch.Size([0])
-        idx:<class 'int'>,0
-        future_frame_diff,<class 'numpy.ndarray'>,shape=(), 3
-        
-        Lang batch: Dict,keys=dict_keys(['robot_obs', 'rgb_obs', 'depth_obs', 'actions', 'state_info', 'use_for_aux_lang_loss', 'lang', 'lang_text', 'idx', 'future_frame_diff'])
-        robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 8])
-        rgb_obs: Dict,keys=dict_keys(['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper'])
-        -rgb_static,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 224, 224])
-        -rgb_gripper,<class 'torch.Tensor'>,shape=torch.Size([2, 3, 84, 84])
-        -gen_static,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])
-        -gen_gripper,<class 'torch.Tensor'>,shape=torch.Size([1, 3, 112, 112])
-        depth_obs: Dict,keys=dict_keys([])
-        actions,<class 'torch.Tensor'>,shape=torch.Size([10, 7])
-        state_info: Dict,keys=dict_keys(['robot_obs', 'scene_obs'])
-        -robot_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 15])
-        -scene_obs,<class 'torch.Tensor'>,shape=torch.Size([2, 24])
-        use_for_aux_lang_loss:<class 'bool'>,False
-        lang,<class 'torch.Tensor'>,shape=torch.Size([1024])
-        lang_text:<class 'str'>,len=30
-        idx:<class 'int'>,0
-        future_frame_diff,<class 'numpy.ndarray'>,shape=(), 3
-        '''
         return episode
 
     def merge_episodes(self, episode1: Dict[str, np.ndarray], episode2: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
