@@ -151,6 +151,10 @@ class ClearDataset(Dataset):
         self.img_gen_frame_diff = img_gen_frame_diff
         self.random_frame_diff = False if img_gen_frame_diff > -1 else True
 
+        ## LitData ##
+        # from debug.de_dataset import DebugLitTrainDataset
+        # self.lit_dataset = DebugLitTrainDataset()
+
     def __getitem__(self, idx: Union[int, Tuple[int, int]]) -> Dict:
         """
         Get sequence of dataset.
@@ -161,6 +165,10 @@ class ClearDataset(Dataset):
         Returns:
             Loaded sequence.
         """
+        # import os
+        # print(f'[DEBUG][LitData] Rank@{os.environ["LOCAL_RANK"]}: len={len(self.lit_dataset)}')
+        # self.lit_dataset.__getitem__(2000)
+        # print('[DEBUG] 2000 got!')
         if isinstance(idx, int):
             # When max_ws_size and min_ws_size are equal, avoid unnecessary padding
             # acts like Constant dataset. Currently, used for language data

@@ -53,6 +53,7 @@ def litdata_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata
         shuffle=False,
         drop_last=False
     )
+    print(f'[litdata_load] dataset_len={len(train_dataset)}')
     bs = 128
     train_dataloader = ld.StreamingDataLoader(
         train_dataset,
@@ -71,7 +72,7 @@ def litdata_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata
     print(f'[litdata_load] Litdata avg Speed: {batch_cnt / (time.time() - start_time)}batches/s, batch_size={bs}')
 
 
-def litdata_rand_read_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata/task_D_D/training'):
+def litdata_rand_read_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata/task_D_D/validation'):
     """ Speed Debug for Litdata """
     train_dataset = ld.StreamingDataset(
         f'local:{data_path}',
@@ -83,21 +84,33 @@ def litdata_rand_read_speed(data_path: str = '/home/geyuan/datasets/CALVIN/datas
     print(train_dataset.__len__())
     print_batch('[0]', train_dataset[0])
     print_batch('__getitem__(0)', train_dataset.__getitem__(0))
-    exit()
 
     dict_ep_idx_to_dataset_order = np.load(os.path.join(data_path, "dict_ep_idx_to_dataset_order.npy"),
             allow_pickle=True).reshape(-1)[0]
     print('keys:', min(dict_ep_idx_to_dataset_order.keys()), max(dict_ep_idx_to_dataset_order.keys()))
     print('values:', min(dict_ep_idx_to_dataset_order.values()), max(dict_ep_idx_to_dataset_order.values()))
 
-    bs = 128
+    ep_npz_names = [int(x.split('_')[1].split('.')[0]) for x in
+                    os.listdir(data_path.replace('litdata/', '')) if 'episode' in x]
+    # np.random.shuffle(ep_npz_names)
     batch_cnt = 0
     start_time = time.time()
-    for idx in range(len(train_dataset) // bs):
-        batch_indices: List = np.random.randint(len(train_dataset), size=bs).tolist()
-        for _ in range(bs):
-            batch_data = train_dataset[batch_indices[_]]
-        batch_cnt += 1
+    bs = 1
+    for i in tqdm(range(len(ep_npz_names))):
+        ep_npz_name = ep_npz_names[i]
+        dataset_order = dict_ep_idx_to_dataset_order[ep_npz_name]
+        print(f'getting {dataset_order}')
+        _ = train_dataset.__getitem__(dataset_order)
+    print(f'[litdata_load] Litdata Episode-Read Speed: {batch_cnt / (time.time() - start_time)}batches/s, batch_size={bs}')
+
+    # bs = 128
+    # batch_cnt = 0
+    # start_time = time.time()
+    # for idx in range(len(train_dataset) // bs):
+    #     batch_indices: List = np.random.randint(len(train_dataset), size=bs).tolist()
+    #     for _ in range(bs):
+    #         batch_data = train_dataset[batch_indices[_]]
+    #     batch_cnt += 1
 
     print(f'[litdata_load] Litdata Rand-Read Speed: {batch_cnt / (time.time() - start_time)}batches/s, batch_size={bs}')
 

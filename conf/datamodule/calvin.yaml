@@ -1,5 +1,5 @@
 defaults:
-  - datasets: lit_stream_calvin
+  - datasets: clear_vl_calvin
   - transforms: calvin_transforms 
 _target_: mdt.datasets.hulc_data_module.HulcDataModule
 _recursive_: false
