@@ -173,9 +173,10 @@ def diskdata_extract(
 
 if __name__ == '__main__':
     '''
-    task: calvin_debug_dataset, task_D_D
+    task: calvin_debug_dataset, task_D_D, task_ABC_D
     split: training, validation
     '''
     # litdata_extract(task='task_D_D', split='validation')
     # litdata_extract(task='task_D_D', split='training')
-    diskdata_extract(task='task_D_D', split='training')
+    diskdata_extract(task='task_ABC_D', split='training')
+    diskdata_extract(task='task_ABC_D', split='validation')
