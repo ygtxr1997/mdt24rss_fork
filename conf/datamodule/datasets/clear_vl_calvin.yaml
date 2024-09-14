@@ -17,8 +17,9 @@ lang_dataset:
   action_seq_len: ${act_seq_len}
   obs_seq_len: ${obs_seq_len}
   future_range: ${future_range}
-
   img_gen_frame_diff: ${img_gen_frame_diff}
+
+  lit_data_root: ${lit_data_root}
 
 vision_dataset:
   _target_: mdt.datasets.clear_dataset.ClearDataset
@@ -37,5 +38,6 @@ vision_dataset:
   action_seq_len: ${act_seq_len}
   obs_seq_len: ${obs_seq_len}
   future_range: ${future_range}
-
   img_gen_frame_diff: ${img_gen_frame_diff}
+
+  lit_data_root: ${lit_data_root}

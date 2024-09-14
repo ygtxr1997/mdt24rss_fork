@@ -18,7 +18,7 @@ sigma_max: 80
 noise_scheduler: 'exponential'
 sigma_sample_density_type: 'loglogistic'
 use_lr_scheduler: true
-act_window_size: 5
+act_window_size: 10
 cont_alpha: 1.0
 masked_beta: 1.0
 use_distributed_clip: True

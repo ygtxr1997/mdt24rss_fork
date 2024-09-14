@@ -1,4 +1,5 @@
 import logging
+import os.path
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
 from itertools import chain
@@ -100,6 +101,8 @@ class ClearDataset(Dataset):
         action_seq_len: int = -1,  # used:10
         future_range: int = -1,  # used:29
         img_gen_frame_diff: int = 3,  # used:3
+        ## LitData ##
+        lit_data_root: str = "",
     ):
         self.observation_space = obs_space
         self.proprio_state = proprio_state
@@ -154,6 +157,15 @@ class ClearDataset(Dataset):
         ## LitData ##
         # from debug.de_dataset import DebugLitTrainDataset
         # self.lit_dataset = DebugLitTrainDataset()
+        assert os.path.exists(lit_data_root)
+        self.lit_data_root: List[int] = lit_data_root
+        train_val_spilt = os.path.basename(os.path.abspath(datasets_dir))  # 'training', 'validation'
+        task_name = os.path.basename(os.path.dirname(os.path.abspath(datasets_dir)))  # 'task_XXX_D'
+        self.lit_data_path = os.path.join(lit_data_root, task_name, train_val_spilt)
+        with open(os.path.join(self.lit_data_path, "ep_npz_names.list"), "r") as f:
+            self.lit_ep_npz_names = [int(x.strip()) for x in f.readlines()]
+            self.lit_ep_npz_name_to_lit_idx = {self.lit_ep_npz_names[i] : i for i in range(len(self.lit_ep_npz_names))}
+        self.lit_ep_rel_actions: np.ndarray = np.load(os.path.join(self.lit_data_path, "ep_rel_actions.npy"))
 
     def __getitem__(self, idx: Union[int, Tuple[int, int]]) -> Dict:
         """
@@ -513,19 +525,31 @@ class ClearDataset(Dataset):
         Returns:
             episode: Dict of numpy arrays containing the episode where keys are the names of modalities.
         """
-        start_idx = self.episode_lookup[idx]
-        end_idx = start_idx + self.action_seq_len + self.obs_seq_len - 1
+        start_idx = self.episode_lookup[idx]  # episode_XXX.npz
+        end_idx = start_idx + self.action_seq_len + self.obs_seq_len - 1  # episode_XXX.npz
         keys = list(chain(*self.observation_space.values()))
         keys.remove("language")
         keys.append("scene_obs")
         # keys:['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper', 'robot_obs', 'rel_actions', 'scene_obs']
-        episodes = [self.load_file(self._get_episode_name(file_idx)) for file_idx in range(start_idx, end_idx)]
 
         # Modify the episode dict to only include the specified sequence lengths
         if self.random_frame_diff:
             img_gen_frame_diff = random.randint(0, self.action_seq_len - 1)
         else:
-            img_gen_frame_diff = self.img_gen_frame_diff
+            img_gen_frame_diff = self.img_gen_frame_diff  # used:3
+        gen_img_idx = start_idx + self.obs_seq_len + img_gen_frame_diff - 1  # episode_XXX.npz
+
+        ''' Episode_*.npz '''
+        op_read_1by1 = False
+        if op_read_1by1:
+            ## Op1. original one-by-one
+            episodes = [self.load_file(self._get_episode_name(file_idx)) for file_idx in range(start_idx, end_idx)]
+        else:
+            ## Op2. read from single file
+            episodes = [self.load_file(self._get_episode_name(file_idx)) for file_idx in range(start_idx, start_idx + self.obs_seq_len)]
+            gen_img_episode = self.load_file(self._get_episode_name(gen_img_idx))
+            lit_indices = [self.lit_ep_npz_name_to_lit_idx[file_idx] for file_idx in range(start_idx, end_idx)]
+            lit_actions = self.lit_ep_rel_actions[lit_indices, :]
 
         episode = {}
         ''' 
@@ -536,22 +560,39 @@ class ClearDataset(Dataset):
             episode[rgb_gripper]: (1, 84, 84, 3), [:1,...]
             episode[robot_obs]: (1, 15), [:1,...]
             episode[scene_obs]: (1, 24), [:1,...]
-            gen_img_static: (1, 200, 200, 3), [3,...]
-            gen_img_gripper: (1, 84, 84, 3), [3,...]
+            gen_img_static: (200, 200, 3), [3,...]
+            gen_img_gripper: (84, 84, 3), [3,...]
         '''
         for key in keys:
             if 'gen' in key:
                 continue
 
             stacked_data = np.stack([ep[key] for ep in episodes])  # len=${act_seq_len},eg.10
-            if key == "rel_actions" or key == 'actions':
-                episode[key] = stacked_data[(self.obs_seq_len - 1):((self.obs_seq_len - 1) + self.action_seq_len), :]
+            if op_read_1by1:
+                ## Op1. original one-by-one
+                if key == "rel_actions" or key == 'actions':
+                    episode[key] = stacked_data[(self.obs_seq_len - 1):((self.obs_seq_len - 1) + self.action_seq_len), :]
+                else:
+                    if key == 'rgb_static':
+                        gen_img_static = stacked_data[self.obs_seq_len + img_gen_frame_diff - 1, :]
+                    elif key == 'rgb_gripper':
+                        gen_img_gripper = stacked_data[self.obs_seq_len + img_gen_frame_diff - 1, :]
+
+                    episode[key] = stacked_data[:self.obs_seq_len, :]
             else:
-                if key == 'rgb_static':
-                    gen_img_static = stacked_data[self.obs_seq_len + img_gen_frame_diff - 1, :]
-                elif key == 'rgb_gripper':
-                    gen_img_gripper = stacked_data[self.obs_seq_len + img_gen_frame_diff - 1, :]
-                episode[key] = stacked_data[:self.obs_seq_len, :]
+                ## Op2. read from single file
+                if key == "rel_actions" or key == 'actions':
+                    episode[key] = lit_actions[(self.obs_seq_len - 1):((self.obs_seq_len - 1) + self.action_seq_len), :]
+                else:
+                    if key == 'rgb_static':
+                        gen_img_static = gen_img_episode[key]
+                    elif key == 'rgb_gripper':
+                        gen_img_gripper = gen_img_episode[key]
+
+                    episode[key] = stacked_data[:self.obs_seq_len, :]
+
+            # print(f'[DEBUG] {key}: {episode[key].shape}, {stacked_data.shape}')
+        # print(f'[DEBUG] gen:{gen_img_static.shape}, {gen_img_gripper.shape}')
 
         if self.with_lang:
             episode["language"] = self.lang_ann[self.lang_lookup[idx]][0]  # TODO check  [0]

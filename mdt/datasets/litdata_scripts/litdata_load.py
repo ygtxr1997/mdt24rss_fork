@@ -9,26 +9,26 @@ from tqdm import tqdm
 from debug.de_dataloader import print_batch
 
 
-def vanilla_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/calvin_debug_dataset/training'):
+def vanilla_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/task_D_D/training'):
     """ Speeed Debug for vanilla dataset """
     import torch
     from torch.utils.data import Dataset, DataLoader
 
     class DebugDataset(Dataset):
-        def __init__(self, files: List[str]):
+        def __init__(self, files: List[str], max_len: int = 100000):
             super().__init__()
             self.files = files
+            self.max_len = max_len
 
         def __len__(self):
-            return len(self.files)
+            return min(len(self.files), self.max_len)
 
         def __getitem__(self, idx):
             return dict(np.load(self.files[idx], allow_pickle=True))
 
     all_files = os.listdir(data_path)
     npz_files = [os.path.join(data_path, x) for x in all_files if x.endswith('.npz') and 'episode' in x]
-    print([os.path.basename(x) for x in npz_files])
-    exit()
+
     bs = 128
     train_dataloader = torch.utils.data.DataLoader(
         DebugDataset(npz_files),
@@ -39,13 +39,14 @@ def vanilla_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/calvin_
     )
     batch_cnt = 0
     start_time = time.time()
-    for idx, sample in enumerate(train_dataloader):
-        # print_batch(f'Batch@{idx}', sample)
-        batch_cnt += 1
+    for _ in range(1):
+        for idx, sample in enumerate(tqdm(train_dataloader)):
+            # print_batch(f'Batch@{idx}', sample)
+            batch_cnt += 1
     print(f'[litdata_load] Vanilla avg Speed: {batch_cnt / (time.time() - start_time)}batches/s, batch_size={bs}')
 
 
-def litdata_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata/calvin_debug_dataset/training'):
+def litdata_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata/task_D_D/training'):
     """ Speed Debug for Litdata """
     train_dataset = ld.StreamingDataset(
         f'local:{data_path}',
@@ -58,21 +59,21 @@ def litdata_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata
     train_dataloader = ld.StreamingDataLoader(
         train_dataset,
         batch_size=bs,
-        shuffle=False,
+        shuffle=True,
         drop_last=False,
         num_workers=8,
     )
 
     batch_cnt = 0
     start_time = time.time()
-    for idx, sample in enumerate(train_dataloader):
-        # print_batch(f'Batch@{idx}', sample)
-        batch_cnt += 1
-
+    for _ in range(1):
+        for idx, sample in enumerate(tqdm(train_dataloader)):
+            # print_batch(f'Batch@{idx}', sample)
+            batch_cnt += 1
     print(f'[litdata_load] Litdata avg Speed: {batch_cnt / (time.time() - start_time)}batches/s, batch_size={bs}')
 
 
-def litdata_rand_read_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata/task_D_D/validation'):
+def litdata_rand_read_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata/calvin_debug_dataset/training'):
     """ Speed Debug for Litdata """
     train_dataset = ld.StreamingDataset(
         f'local:{data_path}',
@@ -117,5 +118,5 @@ def litdata_rand_read_speed(data_path: str = '/home/geyuan/datasets/CALVIN/datas
 
 if __name__ == '__main__':
     # vanilla_speed()
-    # litdata_speed()
-    litdata_rand_read_speed()
+    litdata_speed()
+    # litdata_rand_read_speed()

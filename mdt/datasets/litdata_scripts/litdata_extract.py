@@ -126,9 +126,15 @@ def diskdata_extract(
         extract_key='rel_actions',
 ):
     """ Extract key data from Litdata dataset"""
+    os.makedirs(os.path.join(root, task, split), exist_ok=True)
     disk_dataset = DiskDataset(lit_root=root, task=task, split=split)
     dataset_len = len(disk_dataset)
     print(f'[diskdata_extract] dataset_len={len(disk_dataset)}, dir={os.path.join(root, task, split)}')
+    ep_npz_names = [str(x) for x in disk_dataset.ep_npz_names]
+    with open(os.path.join(root, task, split, 'ep_npz_names.list'), 'w') as f:
+        f.write('\n'.join(ep_npz_names))
+    print(f'[diskdata_extract] ep_npz_names saved to:{os.path.join(root, task, split, "ep_npz_names.list")}, len={len(ep_npz_names)}')
+
     bs = 128
     train_dataloader = DataLoader(
         disk_dataset,
@@ -176,7 +182,9 @@ if __name__ == '__main__':
     task: calvin_debug_dataset, task_D_D, task_ABC_D
     split: training, validation
     '''
-    # litdata_extract(task='task_D_D', split='validation')
-    # litdata_extract(task='task_D_D', split='training')
+    diskdata_extract(task='calvin_debug_dataset', split='validation')
+    diskdata_extract(task='calvin_debug_dataset', split='training')
+    diskdata_extract(task='task_D_D', split='validation')
+    diskdata_extract(task='task_D_D', split='training')
     diskdata_extract(task='task_ABC_D', split='training')
     diskdata_extract(task='task_ABC_D', split='validation')

@@ -5,6 +5,7 @@ from typing import List, Union
 import os
 
 import numpy as np
+from tqdm import tqdm
 import wandb
 
 # This is for using the locally installed repo clone when using slurm
@@ -71,12 +72,12 @@ def main(cfg: DictConfig) -> None:
     for dataset_key, loader in datamodule.train_dataloader().items():
         print(('=' * 20) + f' Dataset {dataset_key} ' + ('=' * 20))
         print(f'Dataloader len={len(loader)}')
-        # for idx, example in enumerate(loader):
-        #     if idx >= 20:
-        #         break
-        #     else:
-        #         print_batch(f'Batch@{idx}th', example)
-        #     print(('-' * 20) + ' Batch End ' + ('-' * 20))
+        for idx, example in enumerate(tqdm(loader)):
+            if idx >= 20:
+                continue
+            # else:
+            #     print_batch(f'Batch@{idx}th', example)
+            # print(('-' * 20) + ' Batch End ' + ('-' * 20))
 
     '''
     Lang: Dict,keys=dict_keys(['robot_obs', 'rgb_obs', 'depth_obs', 'actions', 'state_info', 'use_for_aux_lang_loss', 'lang', 'lang_text', 'idx', 'future_frame_diff'])
