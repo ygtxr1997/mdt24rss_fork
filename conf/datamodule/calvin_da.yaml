@@ -1,3 +1,4 @@
+# conf/datamodule/calvin_da.yaml
 defaults:
   - datasets: clear_vl_calvin
   - transforms: calvin_transforms

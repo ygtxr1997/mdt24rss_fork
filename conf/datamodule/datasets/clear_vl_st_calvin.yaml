@@ -1,4 +1,4 @@
-# conf/datamodule/datasets/clear_vl_calvin.yaml
+# conf/datamodule/datasets/clear_vl_st_calvin.yaml, used for domain adaptation
 lang_dataset:
   _target_: mdt.datasets.clear_dataset.ClearDataset
   key: "lang"

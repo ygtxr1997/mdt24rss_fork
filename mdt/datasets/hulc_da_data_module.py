@@ -21,9 +21,13 @@ ONE_EP_DATASET_URL = "http://www.informatik.uni-freiburg.de/~meeso/50steps.tar.x
 
 
 class HulcDomainAdaptDataModule(pl.LightningDataModule):
+    """
+    Config: conf/datamodule/calvin_da.yaml
+    """
     def __init__(
         self,
-        datasets: DictConfig,
+        source_datasets: DictConfig,
+        target_datasets: DictConfig,
         root_data_dir: str = "data",
         num_workers: int = 8,
         transforms: DictConfig = DEFAULT_TRANSFORM,

@@ -63,7 +63,7 @@ def print_batch(prefix, x, depth=0):
         raise TypeError(f'type {type(x)} not supported. x must be torch.Tensor or list or dict')
 
 
-@hydra.main(config_path="../conf", config_name="config_d_hk")
+@hydra.main(config_path="../conf", config_name="da_d_hk")
 def main(cfg: DictConfig) -> None:
     datamodule = hydra.utils.instantiate(cfg.datamodule)
     print('[DEBUG] datamodule loaded')
