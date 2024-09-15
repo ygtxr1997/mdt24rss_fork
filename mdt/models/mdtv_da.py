@@ -45,6 +45,7 @@ def print_model_parameters(model):
 class MDTVDomainAdapt(pl.LightningModule):
     """
     The lightning module used for training.
+    Config: conf/model/mdtv_da_enc.yaml
     """
 
     def __init__(
@@ -248,6 +249,8 @@ class MDTVDomainAdapt(pl.LightningModule):
         batch_size: Dict[str, int] = {}
         total_bs = 0
         for self.modality_scope, dataset_batch in batch.items():
+            if "target" in self.modality_scope:
+                continue
             # print(f"Modality Scope: {self.modality_scope}")
             # Compute the required embeddings
             perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(dataset_batch)
@@ -320,6 +323,8 @@ class MDTVDomainAdapt(pl.LightningModule):
         output = {}
         val_total_act_loss_pp = torch.tensor(0.0).to(self.device)
         for self.modality_scope, dataset_batch in batch.items():
+            if "target" in self.modality_scope:
+                continue
             # Compute the required embeddings
             perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(dataset_batch)
 

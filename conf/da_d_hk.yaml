@@ -6,7 +6,8 @@ defaults:
   - override hydra/hydra_logging: colorlog
 
 root_home: /home/geyuan
-root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_D_D_local
+source_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_ABC_D
+target_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_D_D_local
 lit_data_root: ${root_home}/datasets/CALVIN/dataset/litdata/
 lang_folder: lang_clip_resnet50
 vis_clip_model_name: ViT-B/16
@@ -20,7 +21,7 @@ future_range: 29
 seed: 242
 device: 'cuda'
 batch_size: 64  # ori:128
-devices: 4
+devices: 2
 goal_window_size: 1
 act_dim: 7
 obs_dim: 384
@@ -70,7 +71,8 @@ hydra:
       override_dirname:
         exclude_keys:
           - log_dir
-          - datamodule.root_data_dir
+          - datamodule.source_root_data_dir
+          - datamodule.target_root_data_dir
           - trainer.gpus
           - datamodule.num_workers
           - trainer.limit_train_batches

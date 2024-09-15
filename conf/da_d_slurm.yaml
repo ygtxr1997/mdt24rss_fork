@@ -1,42 +1,43 @@
 defaults:
   - callbacks: calvin
-  - datamodule: calvin
-  - model: mdtv_agent # mdt_agent
+  - datamodule: calvin_da
+  - model: mdtv_da_enc # mdt_agent, mdtv_agent, mdtv_da_enc
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
 root_home: /public/home/group_xudong/gavinyuan
-root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_ABC_D
+source_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_ABC_D
+target_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_D_D
 lit_data_root: ${root_home}/datasets/CALVIN/litdata/
 lang_folder: lang_clip_resnet50
 vis_clip_model_name: ViT-B/16
 clip_lang_model_name: ViT-B/32
 
 log_dir: ${root_home}/code/mdt24rss_fork/logs
-slurm: true
-min_window_size: 21 # 21
+slurm: false
+min_window_size: 21
 max_window_size: 50
 future_range: 29
 seed: 242
 device: 'cuda'
-batch_size: 128 # 38 # 128
-devices: 4
+batch_size: 64  # ori:128
+devices: 2
 goal_window_size: 1
 act_dim: 7
 obs_dim: 384
 goal_dim: 512
 obs_seq_len: 1
 act_seq_len: 10
-multistep: 10 #${act_seq_len}
+multistep: 10
 p_last_state: 0
 gen_img_res: 112
-max_epochs: 40
-rollout_lh_skip_epochs: 29
+max_epochs: 20
+rollout_lh_skip_epochs: 19
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 12
 img_gen_frame_diff: 3
-benchmark_name: calvin_abc # calvin_abcd
+benchmark_name: calvin_d
 
 
 trainer:
@@ -71,7 +72,8 @@ hydra:
       override_dirname:
         exclude_keys:
           - log_dir
-          - datamodule.root_data_dir
+          - datamodule.source_root_data_dir
+          - datamodule.target_root_data_dir
           - trainer.gpus
           - datamodule.num_workers
           - trainer.limit_train_batches

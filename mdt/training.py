@@ -21,12 +21,13 @@ from mdt.utils.utils import (
     get_last_checkpoint,
     initialize_pretrained_weights,
     print_system_env_info,
+    check_path_exists,
 )
 
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(config_path="../conf", config_name="da_d_hk")
+@hydra.main(config_path="../conf", config_name="da_d_slurm")
 # @hydra.main(config_path="../logs/runs/2023-09-10/17-52-50/.hydra", config_name="config")
 def train(cfg: DictConfig) -> None:
     """
@@ -41,6 +42,14 @@ def train(cfg: DictConfig) -> None:
     log_rank_0(f"Seed for training: {cfg.seed}")
     # new added
     torch.set_float32_matmul_precision('medium')
+
+    # check paths
+    if hasattr(cfg, 'root_data_dir'):
+        cfg.root_data_dir = check_path_exists(cfg.root_data_dir)
+    if hasattr(cfg, 'source_root_data_dir'):
+        cfg.source_root_data_dir = check_path_exists(cfg.source_root_data_dir)
+    if hasattr(cfg, 'target_root_data_dir'):
+        cfg.target_root_data_dir = check_path_exists(cfg.target_root_data_dir)
 
     datamodule = hydra.utils.instantiate(cfg.datamodule)
     chk = get_last_checkpoint(Path.cwd())

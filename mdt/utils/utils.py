@@ -14,6 +14,17 @@ import torch
 import tqdm
 
 
+def check_path_exists(path):
+    print(f"Checking directory {path} exists...")
+    if not os.path.exists(path):
+        new_path = path.replace('_local', '')
+        print(f"[Warning] Directory {path} does not exist, switch to {new_path}...")
+        if not os.path.exists(new_path):
+            assert FileExistsError(new_path)
+        path = new_path
+    return path
+
+
 def timeit(method):
     def timed(*args, **kw):
         ts = time.time()

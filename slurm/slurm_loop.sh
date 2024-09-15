@@ -3,9 +3,10 @@
 #SBATCH -p High
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1          # crucial - only 1 task per dist per node!
-#SBATCH --gres=gpu:1                 # number of GPUs per node
+#SBATCH --gres=gpu:4                 # number of GPUs per node
 #SBATCH --cpus-per-task=16           # number of cores per tasks
-#SBATCH --mem=300000MB                # memory
+#SBATCH --mem=300000MB               # memory
+#SBATCH -t 72:00:00
 #SBATCH --comment=LOOP
 #SBATCH --output=/public/home/group_xudong/gavinyuan/debug/outputs/%x-%j.out
 

@@ -8,6 +8,8 @@ import numpy as np
 from tqdm import tqdm
 import wandb
 
+from mdt.models.networks.transformers.position_embeddings import exists
+
 # This is for using the locally installed repo clone when using slurm
 sys.path.insert(0, Path(__file__).absolute().parents[1].as_posix())
 import hydra
@@ -24,6 +26,7 @@ from mdt.utils.utils import (
     get_last_checkpoint,
     initialize_pretrained_weights,
     print_system_env_info,
+    check_path_exists,
 )
 
 
@@ -63,21 +66,30 @@ def print_batch(prefix, x, depth=0):
         raise TypeError(f'type {type(x)} not supported. x must be torch.Tensor or list or dict')
 
 
-@hydra.main(config_path="../conf", config_name="da_d_hk")
+@hydra.main(config_path="../conf", config_name="config_abc_slurm")
 def main(cfg: DictConfig) -> None:
+    # check paths
+    if hasattr(cfg, 'root_data_dir'):
+        cfg.root_data_dir = check_path_exists(cfg.root_data_dir)
+    if hasattr(cfg, 'source_root_data_dir'):
+        cfg.source_root_data_dir = check_path_exists(cfg.source_root_data_dir)
+    if hasattr(cfg, 'target_root_data_dir'):
+        cfg.target_root_data_dir = check_path_exists(cfg.target_root_data_dir)
+
     datamodule = hydra.utils.instantiate(cfg.datamodule)
     print('[DEBUG] datamodule loaded')
     datamodule.setup()
 
-    for dataset_key, loader in datamodule.train_dataloader().items():
-        print(('=' * 20) + f' Dataset {dataset_key} ' + ('=' * 20))
-        print(f'Dataloader len={len(loader)}')
-        for idx, example in enumerate(tqdm(loader)):
-            if idx >= 20:
-                continue
-            # else:
-            #     print_batch(f'Batch@{idx}th', example)
-            # print(('-' * 20) + ' Batch End ' + ('-' * 20))
+    for idx in tqdm(range(1000)):
+        if idx >= 20:
+            exit()
+        print(('-' * 20) + ' Batch Start ' + ('-' * 20))
+        for dataset_key, loader in datamodule.train_dataloader().items():
+            print(('=' * 20) + f' Dataset {dataset_key} ' + ('=' * 20))
+            print(f'Dataloader len={len(loader)}')
+            example = next(iter(loader))
+            # print_batch(f'Batch@{idx}th', example)
+        print(('-' * 20) + ' Batch End ' + ('-' * 20))
 
     '''
     Lang: Dict,keys=dict_keys(['robot_obs', 'rgb_obs', 'depth_obs', 'actions', 'state_info', 'use_for_aux_lang_loss', 'lang', 'lang_text', 'idx', 'future_frame_diff'])
