@@ -141,7 +141,7 @@ class RolloutLongHorizon(Callback):
         """Called when the validation loop begins."""
         if self.env is None:
             self.device = pl_module.device
-            if "target" in trainer.val_dataloaders[0].dataset.datasets.keys():
+            if "lang_target" in trainer.val_dataloaders[0].dataset.datasets.keys():
                 dataset = trainer.val_dataloaders[0].dataset.datasets["lang_target"] if 'lang' in trainer.val_dataloaders[0].dataset.datasets else trainer.val_dataloaders[0].dataset.datasets['vis_target'] # type: ignore
             else:
                 dataset = trainer.val_dataloaders[0].dataset.datasets["lang"] if 'lang' in trainer.val_dataloaders[0].dataset.datasets else trainer.val_dataloaders[0].dataset.datasets['vis']

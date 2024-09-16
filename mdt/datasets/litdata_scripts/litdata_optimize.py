@@ -53,7 +53,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("-i", "--in_data", type=str,
                             help="path to original data")
     arg_parser.add_argument("-o", "--out_data", type=str,
-                            default='/home/geyuan/datasets/CALVIN/dataset/litdata',
+                            default='/home/geyuan/code/mdt24rss_fork/dataset/litdata',
                             help="path to optimized output data")
     args = arg_parser.parse_args()
 

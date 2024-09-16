@@ -17,7 +17,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 
 class DiskDataset(Dataset):
-    def __init__(self, lit_root='/home/geyuan/datasets/CALVIN/dataset/litdata',
+    def __init__(self, lit_root='/home/geyuan/code/mdt24rss_fork/dataset/litdata',
                  task='task_D_D',
                  split='training',
                  target_key='rel_actions'):
@@ -42,7 +42,7 @@ class DiskDataset(Dataset):
 
 
 class LitDataset(ld.StreamingDataset):
-    def __init__(self, root='/home/geyuan/datasets/CALVIN/dataset/litdata',
+    def __init__(self, root='/home/geyuan/code/mdt24rss_fork/dataset/litdata',
                  task='task_D_D',
                  split='training'):
         super().__init__(
@@ -69,7 +69,7 @@ class LitDataset(ld.StreamingDataset):
 
 @torch.no_grad()
 def litdata_extract(
-        root='/home/geyuan/datasets/CALVIN/dataset/litdata',
+        root='/home/geyuan/code/mdt24rss_fork/dataset/litdata',
         task='task_D_D',  # calvin_debug_dataset, task_D_D
         split='training',  # training, validation
         extract_key='rel_actions',
@@ -120,7 +120,7 @@ def litdata_extract(
 
 @torch.no_grad()
 def diskdata_extract(
-        root='/home/geyuan/datasets/CALVIN/dataset/litdata',
+        root='/home/geyuan/code/mdt24rss_fork/dataset/litdata',
         task='task_D_D',  # calvin_debug_dataset, task_D_D
         split='training',  # training, validation
         extract_key='rel_actions',
@@ -182,9 +182,11 @@ if __name__ == '__main__':
     task: calvin_debug_dataset, task_D_D, task_ABC_D
     split: training, validation
     '''
-    diskdata_extract(task='calvin_debug_dataset', split='validation')
-    diskdata_extract(task='calvin_debug_dataset', split='training')
-    diskdata_extract(task='task_D_D', split='validation')
-    diskdata_extract(task='task_D_D', split='training')
-    diskdata_extract(task='task_ABC_D', split='training')
-    diskdata_extract(task='task_ABC_D', split='validation')
+    # diskdata_extract(task='calvin_debug_dataset', split='validation')
+    # diskdata_extract(task='calvin_debug_dataset', split='training')
+    # diskdata_extract(task='task_D_D', split='validation')
+    # diskdata_extract(task='task_D_D', split='training')
+    # diskdata_extract(task='task_ABC_D', split='training')
+    # diskdata_extract(task='task_ABC_D', split='validation')
+    diskdata_extract(task='task_ABCD_D', split='training')
+    diskdata_extract(task='task_ABCD_D', split='validation')

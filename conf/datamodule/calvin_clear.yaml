@@ -1,11 +1,11 @@
-# conf/datamodule/calvin.yaml
+# conf/datamodule/calvin_clear.yaml
 defaults:
-  - datasets: vision_lang_calvin  # ori:vision_lang_calvin, ours:clear_vl_calvin
-  - transforms: calvin_transforms 
+  - datasets: clear_vl_calvin  # ori:vision_lang_calvin, ours:clear_vl_calvin
+  - transforms: calvin_transforms
 _target_: mdt.datasets.hulc_data_module.HulcDataModule
 _recursive_: false
 
-root_data_dir: ${root_data_dir}  
+root_data_dir: ${root_data_dir}
 action_space: 7
 action_max: [1., 1., 1., 1., 1., 1., 1.,]
 action_min: [-1., -1., -1., -1., -1., -1., -1]

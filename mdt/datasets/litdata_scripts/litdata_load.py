@@ -46,7 +46,7 @@ def vanilla_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/task_D_
     print(f'[litdata_load] Vanilla avg Speed: {batch_cnt / (time.time() - start_time)}batches/s, batch_size={bs}')
 
 
-def litdata_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata/task_D_D/training'):
+def litdata_speed(data_path: str = '/home/geyuan/code/mdt24rss_fork/dataset/litdata/task_D_D/training'):
     """ Speed Debug for Litdata """
     train_dataset = ld.StreamingDataset(
         f'local:{data_path}',
@@ -73,7 +73,7 @@ def litdata_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata
     print(f'[litdata_load] Litdata avg Speed: {batch_cnt / (time.time() - start_time)}batches/s, batch_size={bs}')
 
 
-def litdata_rand_read_speed(data_path: str = '/home/geyuan/datasets/CALVIN/dataset/litdata/calvin_debug_dataset/training'):
+def litdata_rand_read_speed(data_path: str = '/home/geyuan/code/mdt24rss_fork/dataset/litdata/calvin_debug_dataset/training'):
     """ Speed Debug for Litdata """
     train_dataset = ld.StreamingDataset(
         f'local:{data_path}',

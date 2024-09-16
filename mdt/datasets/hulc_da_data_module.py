@@ -213,17 +213,16 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
               f'val.keys:{self.val_datasets.keys()}.')
 
     def train_dataloader(self):
-        return {
+        return CombinedLoader({
             key: DataLoader(
                 dataset,
                 batch_size=dataset.batch_size,
                 num_workers=dataset.num_workers,
                 pin_memory=True,
                 shuffle=True,
-                prefetch_factor=2,
             )
             for key, dataset in self.train_datasets.items()
-        }
+        }, "max_size_cycle")
 
     def val_dataloader(self):
         val_dataloaders = {

@@ -274,7 +274,7 @@ callbacks:
 datamodule:
   datasets:
     lang_dataset:
-      _target_: mdt.datasets.disk_dataset.ExtendedDiskDataset
+      _target_: mdt.datasets.clear_dataset.ClearDataset
       key: lang
       save_format: npz
       batch_size: ${batch_size}
@@ -293,8 +293,9 @@ datamodule:
       obs_seq_len: ${obs_seq_len}
       future_range: ${future_range}
       img_gen_frame_diff: ${img_gen_frame_diff}
+      lit_data_root: ${lit_data_root}
     vision_dataset:
-      _target_: mdt.datasets.disk_dataset.ExtendedDiskDataset
+      _target_: mdt.datasets.clear_dataset.ClearDataset
       key: vis
       save_format: npz
       batch_size: ${batch_size}
@@ -311,6 +312,7 @@ datamodule:
       obs_seq_len: ${obs_seq_len}
       future_range: ${future_range}
       img_gen_frame_diff: ${img_gen_frame_diff}
+      lit_data_root: ${lit_data_root}
   transforms:
     train:
       rgb_static:
@@ -660,7 +662,7 @@ model:
   perceiver_num_time_embeds: 1
   perceiver_dim: 384
   num_latents: 3
-  voltron_cache: /home/hk-project-robolear/ft4740/code/calvin_d/pretrained_model_weights
+  voltron_cache: ${root_home}/pretrained
   optimizer:
     _target_: torch.optim.AdamW
     transformer_weight_decay: 0.05
@@ -677,18 +679,20 @@ model:
       total_steps: 50000
       phase_ratio: (0.02, 0.08, 0.9)
       lr: 0.0001
-root_data_dir: /home/hk-project-robolear/ft4740/code/calvin_d_old/dataset/task_D_D
+root_home: /home/geyuan
+root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_D_D
+lit_data_root: ${root_home}/code/mdt24rss_fork/dataset/litdata/
 lang_folder: lang_clip_resnet50
 vis_clip_model_name: ViT-B/16
 clip_lang_model_name: ViT-B/32
-log_dir: /home/hk-project-sustainebot/ft4740/code/mdt_policy/logs
+log_dir: ${root_home}/code/mdt24rss_fork/logs
 slurm: false
 min_window_size: 21
 max_window_size: 50
 future_range: 29
-seed: 41
+seed: 242
 device: cuda
-batch_size: 128
+batch_size: 64
 devices: 4
 goal_window_size: 1
 act_dim: 7
@@ -721,5 +725,5 @@ logger:
   group: mdt
   log_model: false
   project: ${benchmark_name}
-  entity: bennoq
+  entity: gavinyuan
   id: ???

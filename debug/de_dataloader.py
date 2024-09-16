@@ -66,7 +66,7 @@ def print_batch(prefix, x, depth=0):
         raise TypeError(f'type {type(x)} not supported. x must be torch.Tensor or list or dict')
 
 
-@hydra.main(config_path="../conf", config_name="config_abc_slurm")
+@hydra.main(config_path="../conf", config_name="da_d_hk")
 def main(cfg: DictConfig) -> None:
     # check paths
     if hasattr(cfg, 'root_data_dir'):
@@ -78,17 +78,16 @@ def main(cfg: DictConfig) -> None:
 
     datamodule = hydra.utils.instantiate(cfg.datamodule)
     print('[DEBUG] datamodule loaded')
-    datamodule.setup()
+    datamodule.prepare_data()
+    datamodule.setup(stage='train')
 
-    for idx in tqdm(range(1000)):
-        if idx >= 20:
-            exit()
+    for idx, batch in enumerate(tqdm(datamodule.train_dataloader())):
         print(('-' * 20) + ' Batch Start ' + ('-' * 20))
-        for dataset_key, loader in datamodule.train_dataloader().items():
+        dataset_keys = batch.keys()
+        for dataset_key in dataset_keys:
             print(('=' * 20) + f' Dataset {dataset_key} ' + ('=' * 20))
-            print(f'Dataloader len={len(loader)}')
-            example = next(iter(loader))
-            # print_batch(f'Batch@{idx}th', example)
+            example = batch[dataset_key]
+        # print_batch(f'Batch@{idx}th', batch)
         print(('-' * 20) + ' Batch End ' + ('-' * 20))
 
     '''

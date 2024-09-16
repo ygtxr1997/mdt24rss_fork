@@ -1,5 +1,5 @@
 # conf/model/mdtv_da_enc.yaml
-_target_: mdt.models.mdtv_da.MDTVDomainAdapt
+_target_: mdt.models.mdtv_da.MDTVDomainAdaptVisualEncoder
 _recursive_: false
 
 defaults:
@@ -7,6 +7,7 @@ defaults:
   - visual_goal: clip
   - img_gen: masked_transformer
   - model: mdtv_transformer
+  - domain_adapt: adda
 
 
 latent_dim: 384
@@ -24,7 +25,8 @@ cont_alpha: 1.0
 masked_beta: 1.0
 use_distributed_clip: True
 use_text_not_embedding: True
-ckpt_path: null
+#ckpt_path: '/mnt/dongxu-fs1/data-ssd/geyuan/code/mdt24rss_fork/logs/runs/2024-09-08/00-29-39/saved_models/epoch=29_eval_lh/avg_seq_len=1.60.ckpt'  # load pretrained ckpt
+ckpt_path: '/public/home/group_xudong/gavinyuan/code/mdt24rss_fork/logs/runs/2024-09-08/14-48-31/saved_models/epoch=29_eval_lh/avg_seq_len=1.96.ckpt'
 seed: ${seed}
 perceiver_depth: 6
 perceiver_heads: 8

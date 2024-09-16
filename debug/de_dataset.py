@@ -38,7 +38,7 @@ class DebugDataset(Dataset):
         else:
             self.data = torch.randn((500, 3, 112, 112))
         self.train_ep_npz_names = [int(x.split('_')[1].split('.')[0]) for x in os.listdir('/home/geyuan/datasets/CALVIN/dataset/task_D_D/training') if 'episode' in x]
-        self.train_dict_ep_idx_to_dataset_order = np.load(os.path.join('/home/geyuan/datasets/CALVIN/dataset/litdata/task_D_D/training', "dict_ep_idx_to_dataset_order.npy"),
+        self.train_dict_ep_idx_to_dataset_order = np.load(os.path.join('/home/geyuan/code/mdt24rss_fork/dataset/litdata/task_D_D/training', "dict_ep_idx_to_dataset_order.npy"),
             allow_pickle=True).reshape(-1)[0]
         self.lit_train_dataset = DebugLitTrainDataset()
 
@@ -46,7 +46,7 @@ class DebugDataset(Dataset):
                                    os.listdir('/home/geyuan/datasets/CALVIN/dataset/task_D_D/validation') if
                                    'episode' in x]
         self.val_dict_ep_idx_to_dataset_order = np.load(
-            os.path.join('/home/geyuan/datasets/CALVIN/dataset/litdata/task_D_D/validation',
+            os.path.join('/home/geyuan/code/mdt24rss_fork/dataset/litdata/task_D_D/validation',
                          "dict_ep_idx_to_dataset_order.npy"),
             allow_pickle=True).reshape(-1)[0]
         self.lit_val_dataset = DebugLitValDataset()
@@ -78,7 +78,7 @@ class DebugDataset(Dataset):
 
 
 class DebugLitTrainDataset(ld.StreamingDataset):
-    def __init__(self, dir='/home/geyuan/datasets/CALVIN/dataset/litdata/task_D_D/training'):
+    def __init__(self, dir='/home/geyuan/code/mdt24rss_fork/dataset/litdata/task_D_D/training'):
         super().__init__(
             input_dir=f'local:{dir}',
             max_cache_size="10GB",
@@ -94,7 +94,7 @@ class DebugLitTrainDataset(ld.StreamingDataset):
 
 
 class DebugLitValDataset(ld.StreamingDataset):
-    def __init__(self, dir='/home/geyuan/datasets/CALVIN/dataset/litdata/task_D_D/validation'):
+    def __init__(self, dir='/home/geyuan/code/mdt24rss_fork/dataset/litdata/task_D_D/validation'):
         super().__init__(
             input_dir=f'local:{dir}',
             max_cache_size="10GB",
@@ -110,7 +110,7 @@ class DebugLitValDataset(ld.StreamingDataset):
 
 
 class DebugStreamingDataset(ld.StreamingDataset):
-    def __init__(self, dir='/home/geyuan/datasets/CALVIN/dataset/litdata/calvin_debug_dataset/training'):
+    def __init__(self, dir='/home/geyuan/code/mdt24rss_fork/dataset/litdata/calvin_debug_dataset/training'):
         super().__init__(
             input_dir=f'local:{dir}',
             max_cache_size="10GB",

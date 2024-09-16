@@ -121,7 +121,7 @@ class PerceiverResampler(nn.Module):
             param.requires_grad = trainable
 
     def forward(self, x_f: torch.Tensor, mask: torch.BoolTensor = None):
-        """Run perceiver resampler on the input visual embeddings
+        """Run source_perceiver resampler on the input visual embeddings
 
         Args:
             x_f: Input visual embeddings of shape (batch_size, n_frames, n_features, d_visual)

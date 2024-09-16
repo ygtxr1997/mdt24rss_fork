@@ -1,3 +1,4 @@
+# conf/callbacks/rollout_h/default.yaml
 defaults:
   - /callbacks/rollout/tasks@tasks: new_playtable_tasks
   - /annotations@val_annotations: new_playtable_validation
@@ -8,7 +9,7 @@ env_cfg:
 skip_epochs: ${rollout_lh_skip_epochs}
 rollout_freq: 5
 num_videos: 0
-num_sequences: 1000 # 128
+num_sequences: 100 # ori:1000
 replan_freq: 30
 ep_len: 360
 empty_cache: false

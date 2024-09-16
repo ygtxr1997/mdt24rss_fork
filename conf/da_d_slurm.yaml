@@ -1,3 +1,4 @@
+# conf/da_d_slurm.yaml
 defaults:
   - callbacks: calvin
   - datamodule: calvin_da
@@ -8,7 +9,7 @@ defaults:
 root_home: /public/home/group_xudong/gavinyuan
 source_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_ABC_D
 target_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_D_D
-lit_data_root: ${root_home}/datasets/CALVIN/litdata/
+lit_data_root: ${root_home}/code/mdt24rss_fork/dataset/litdata/
 lang_folder: lang_clip_resnet50
 vis_clip_model_name: ViT-B/16
 clip_lang_model_name: ViT-B/32
@@ -20,8 +21,8 @@ max_window_size: 50
 future_range: 29
 seed: 242
 device: 'cuda'
-batch_size: 64  # ori:128
-devices: 2
+batch_size: 48  # ori:128
+devices: 4
 goal_window_size: 1
 act_dim: 7
 obs_dim: 384
@@ -31,8 +32,8 @@ act_seq_len: 10
 multistep: 10
 p_last_state: 0
 gen_img_res: 112
-max_epochs: 20
-rollout_lh_skip_epochs: 19
+max_epochs: 15
+rollout_lh_skip_epochs: 4
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 12

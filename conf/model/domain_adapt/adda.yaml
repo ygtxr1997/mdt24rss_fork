@@ -1,0 +1,3 @@
+# conf/model/domain_adapt/adda.yaml
+_target_: mdt.models.domain_adapt.adda.ADDALoss
+_recursive_: false

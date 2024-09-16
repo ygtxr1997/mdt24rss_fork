@@ -7,7 +7,7 @@ defaults:
 
 root_home: /public/home/group_xudong/gavinyuan
 root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_D_D
-lit_data_root: ${root_home}/datasets/CALVIN/litdata/
+lit_data_root: ${root_home}/code/mdt24rss_fork/dataset/litdata/
 lang_folder: lang_clip_resnet50
 vis_clip_model_name: ViT-B/16
 clip_lang_model_name: ViT-B/32
