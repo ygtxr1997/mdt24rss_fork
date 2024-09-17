@@ -17,13 +17,14 @@ class ADDALoss(nn.Module):
     def __init__(self, in_dim: int = 3 * 384):
         super(ADDALoss, self).__init__()
         self.discriminator = nn.Sequential(
-            nn.Linear(in_dim, 256),
+            nn.Linear(in_dim, 3 * 384),
             nn.ReLU(),
-            nn.Linear(256, 60),
+            nn.Linear(3 * 384, 3 * 384),
             nn.ReLU(),
-            nn.Linear(60, 1)
+            nn.Linear(3 * 384, 2),
+            nn.LogSoftmax(),
         )
-        self.criterion = nn.BCEWithLogitsLoss()
+        self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, target_feat, source_feat=None, is_discriminator_batch: bool = True, gt_labels=None,):
         if source_feat is None:
@@ -44,5 +45,5 @@ class ADDALoss(nn.Module):
             if gt_labels is None:
                 gt_labels = torch.ones(source_feat.shape[0], device=device)  # flipped labels
         preds = self.discriminator(in_feat).squeeze()
-        loss = self.criterion(preds, gt_labels)
+        loss = self.criterion(preds, gt_labels.long())
         return loss

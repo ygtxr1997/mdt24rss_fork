@@ -1024,7 +1024,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.perceiver, True)
         self.set_requires_grad(self.img_encoder, True)
 
-        g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
+        g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate * 0.01,
                                         betas=self.optimizer_config.betas)
         d_optimizer = torch.optim.AdamW(d_optim_groups, lr=self.optimizer_config.learning_rate,
                                         betas=self.optimizer_config.betas)
@@ -1036,7 +1036,9 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         # Optionally initialize the scheduler
         if self.use_lr_scheduler:
             lr_configs = OmegaConf.create(self.lr_scheduler)
-            g_scheduler = TriStageLRScheduler(g_optimizer, lr_configs)
+            g_lr_configs = OmegaConf.create(self.lr_scheduler)
+            g_lr_configs.lr = g_lr_configs.init_lr = 1e-5
+            g_scheduler = TriStageLRScheduler(g_optimizer, g_lr_configs)
             g_lr_scheduler = {
                 "scheduler": g_scheduler,
                 # "interval": 'step',
@@ -1049,8 +1051,12 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 # "frequency": 1,
             }
             return (
-                {"optimizer": g_optimizer, "lr_scheduler": g_lr_scheduler},
-                {"optimizer": d_optimizer, "lr_scheduler": d_lr_scheduler},
+                {"optimizer": g_optimizer,
+                 # "lr_scheduler": g_lr_scheduler,
+                 },
+                {"optimizer": d_optimizer,
+                 # "lr_scheduler": d_lr_scheduler,
+                 },
             )
         else:
             return g_optimizer, d_optimizer
@@ -1100,21 +1106,21 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         """
 
         g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training
-        g_sch, d_sch = self.lr_schedulers()
+        # g_sch, d_sch = self.lr_schedulers()
 
-        is_discriminator_batch = (batch_idx % 6) < 5  # true:update discriminator; false:update encoder
+        is_discriminator_batch = (batch_idx % 2) < 1  # true:update discriminator; false:update encoder
         if is_discriminator_batch:
             # self.set_requires_grad(self.da_loss, True)
             self.set_requires_grad(self.img_encoder, False)
             self.set_requires_grad(self.perceiver, False)
             opt = g_opt
-            sch = g_sch
+            # sch = g_sch
         else:
             # self.set_requires_grad(self.da_loss, False)
             self.set_requires_grad(self.img_encoder, True)
             self.set_requires_grad(self.perceiver, True)
             opt = d_opt
-            sch = d_sch
+            # sch = d_sch
 
         total_loss, action_loss, cont_loss, id_loss, img_gen_loss, da_d_loss, da_g_loss = (
             torch.tensor(0.0).to(self.device),
@@ -1261,7 +1267,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         opt.zero_grad()
         self.manual_backward(da_loss)
         opt.step()
-        sch.step()
+        # sch.step()
         return total_loss
 
     @torch.no_grad()
