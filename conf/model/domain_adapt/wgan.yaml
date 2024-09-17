@@ -1,0 +1,3 @@
+# conf/model/domain_adapt/wgan.yaml
+_target_: mdt.models.domain_adapt.wgan.WGAN_GP
+_recursive_: false

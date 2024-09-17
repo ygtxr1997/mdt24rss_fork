@@ -33,7 +33,7 @@ multistep: 10
 p_last_state: 0
 gen_img_res: 112
 max_epochs: 15
-rollout_lh_skip_epochs: 9
+rollout_lh_skip_epochs: 4
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 12

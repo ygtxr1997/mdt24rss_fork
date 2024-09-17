@@ -961,6 +961,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.da_loss = hydra.utils.instantiate(domain_adapt).to(self.device)
         self.cache_da_d_loss = 0.
         self.cache_da_g_loss = 0.
+        self.weight_cliping_limit = 0.01
 
     def load_pretrained_parameters(self, ckpt_path):
         """
@@ -1027,6 +1028,10 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                                         betas=self.optimizer_config.betas)
         d_optimizer = torch.optim.AdamW(d_optim_groups, lr=self.optimizer_config.learning_rate,
                                         betas=self.optimizer_config.betas)
+        # g_optimizer = torch.optim.RMSprop(g_optim_groups, lr=self.optimizer_config.learning_rate,
+        #                                 )
+        # d_optimizer = torch.optim.RMSprop(d_optim_groups, lr=self.optimizer_config.learning_rate,
+        #                                 )
 
         # Optionally initialize the scheduler
         if self.use_lr_scheduler:
@@ -1097,7 +1102,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training
         g_sch, d_sch = self.lr_schedulers()
 
-        is_discriminator_batch = batch_idx % 2 == 0  # true:update discriminator; false:update encoder
+        is_discriminator_batch = (batch_idx % 6) < 5  # true:update discriminator; false:update encoder
         if is_discriminator_batch:
             # self.set_requires_grad(self.da_loss, True)
             self.set_requires_grad(self.img_encoder, False)
@@ -1134,7 +1139,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 if not is_discriminator_batch:  # only used for updating discriminator
                     continue
                 # Compute the required embeddings
-                s_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(dataset_batch)
+                s_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
+                    dataset_batch, is_target=False)
                 '''
                 perceptual_emb:: Dict,keys=dict_keys(['state_images', 'modality'])
                 -state_images,<class 'torch.Tensor'>,shape=torch.Size([16, 3, 384])
@@ -1144,7 +1150,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 '''
                 s_batch_len += 1
             elif 'target' in self.modality_scope:
-                t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(dataset_batch)
+                t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
+                    dataset_batch, is_target=True)
                 t_batch_len += 1
             else:
                 raise KeyError(f'[MDTVDomainAdaptVisualEncoder] batch key:{self.modality_scope} not supported')
@@ -1190,6 +1197,11 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         # Domain Adaptation Loss
         if is_discriminator_batch:
             # update D
+
+            # # Clamp parameters to a range [-c, c], c=self.weight_cliping_limit
+            # for p in self.da_loss.parameters():
+            #     p.data.clamp_(-self.weight_cliping_limit, self.weight_cliping_limit)
+
             da_d_loss = self.da_loss.forward(
                 t_perceptual_emb['state_images'].detach(),  # avoid grad
                 s_perceptual_emb['state_images'].detach(),  # avoid grad
@@ -1274,7 +1286,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             if "source" in self.modality_scope:
                 continue
             # Compute the required embeddings
-            perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(dataset_batch)
+            perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
+                dataset_batch, is_target=True)
 
             # predict the next action sequence
             action_pred = self.denoise_actions(
@@ -1314,7 +1327,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             output["validation_loss"] = val_total_act_loss_pp
         return output
 
-    def compute_input_embeddings(self, dataset_batch):
+    def compute_input_embeddings(self, dataset_batch, is_target: bool = True):
         """
         Compute the required embeddings for the visual ones and the latent goal.
         """
@@ -1342,21 +1355,27 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         else:
             image_latent_goal = None
 
-        perceptual_emb = self.compute_voltron_embeddings(rgb_static, rgb_gripper)
+        perceptual_emb = self.compute_voltron_embeddings(rgb_static, rgb_gripper, is_target)
         perceptual_emb['modality'] = modality
         return perceptual_emb, latent_goal, image_latent_goal
 
-    def compute_voltron_embeddings(self, rgb_static, rgb_gripper):
+    def compute_voltron_embeddings(self, rgb_static, rgb_gripper, is_target=True):
         """
         Compute the visual embeddings using the Voltron model.
         """
         rgb_static = einops.rearrange(rgb_static, 'b t c h w -> (b t) c h w')
         rgb_gripper = einops.rearrange(rgb_gripper, 'b t c h w -> (b t) c h w')
-        static_tokens = self.img_encoder(rgb_static)
-        gripper_tokens = self.img_encoder(rgb_gripper)
+        if is_target:
+            img_encoder = self.img_encoder
+            perceiver = self.perceiver
+        else:
+            img_encoder = self.source_img_encoder
+            perceiver = self.source_perceiver
+        static_tokens = img_encoder(rgb_static)
+        gripper_tokens = img_encoder(rgb_gripper)
 
         token_seq = torch.cat([static_tokens, gripper_tokens], dim=1).unsqueeze(1)
-        perceptual_emb = {'state_images': self.source_perceiver(token_seq)}
+        perceptual_emb = {'state_images': perceiver(token_seq)}
         return perceptual_emb
 
     def clip_extra_forward(self, perceptual_emb, latent_goal, actions, sigmas, noise):
@@ -1447,8 +1466,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.log("train/total_loss", total_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
         self.log("train/cont_loss", cont_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
         self.log("train/img_gen_loss", img_gen_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/da_d_loss", da_d_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/da_g_loss", da_g_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
+        self.log("train/da_d_loss", da_d_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
+        self.log("train/da_g_loss", da_g_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
 
     def _log_validation_metrics(self, pred_loss, img_gen_loss, val_total_act_loss_pp):
         """

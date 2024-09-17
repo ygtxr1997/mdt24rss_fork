@@ -17,11 +17,11 @@ class ADDALoss(nn.Module):
     def __init__(self, in_dim: int = 3 * 384):
         super(ADDALoss, self).__init__()
         self.discriminator = nn.Sequential(
-            nn.Linear(in_dim, 50),
+            nn.Linear(in_dim, 256),
             nn.ReLU(),
-            nn.Linear(50, 20),
+            nn.Linear(256, 60),
             nn.ReLU(),
-            nn.Linear(20, 1)
+            nn.Linear(60, 1)
         )
         self.criterion = nn.BCEWithLogitsLoss()
 
