@@ -22,7 +22,6 @@ class ADDALoss(nn.Module):
             nn.Linear(3 * 384, 3 * 384),
             nn.ReLU(),
             nn.Linear(3 * 384, 2),
-            nn.LogSoftmax(),
         )
         self.criterion = nn.CrossEntropyLoss()
 
@@ -44,6 +43,6 @@ class ADDALoss(nn.Module):
             in_feat = target_feat
             if gt_labels is None:
                 gt_labels = torch.ones(source_feat.shape[0], device=device)  # flipped labels
-        preds = self.discriminator(in_feat).squeeze()
+        preds = self.discriminator(in_feat)
         loss = self.criterion(preds, gt_labels.long())
         return loss

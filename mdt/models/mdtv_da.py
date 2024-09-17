@@ -1024,7 +1024,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.perceiver, True)
         self.set_requires_grad(self.img_encoder, True)
 
-        g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate * 0.01,
+        g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
                                         betas=self.optimizer_config.betas)
         d_optimizer = torch.optim.AdamW(d_optim_groups, lr=self.optimizer_config.learning_rate,
                                         betas=self.optimizer_config.betas)
@@ -1089,6 +1089,96 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         else:
             model.eval()
 
+    def training_step_together(self, batch, batch_idx, dataloader_idx):
+        """ Putting source and target updating in a single batch seems better
+        Code mainly refers to: https://github.com/corenel/pytorch-adda
+        """
+        g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training
+        # g_sch, d_sch = self.lr_schedulers()
+
+        total_loss, action_loss, cont_loss, id_loss, img_gen_loss, da_d_loss, da_g_loss = (
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+        )
+        encoders_dict = {}
+        batch_size: Dict[str, int] = {}
+        s_batch_len = 0
+        t_batch_len = 0
+        total_bs = 0
+        s_perceptual_emb = None
+        t_perceptual_emb = None
+        for self.modality_scope, dataset_batch in batch.items():  # 'lang_source', 'lang_target', 'vis_source', 'vis_target'
+            if 'lang' in self.modality_scope:  # skip:'lang_source', 'lang_target'
+                continue
+            if 'source' in self.modality_scope:
+                # Compute the required embeddings
+                s_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
+                    dataset_batch, is_target=False)
+                '''
+                perceptual_emb:: Dict,keys=dict_keys(['state_images', 'modality'])
+                -state_images,<class 'torch.Tensor'>,shape=torch.Size([16, 3, 384])
+                -modality:<class 'str'>,len=4
+                latent_goal:,<class 'torch.Tensor'>,shape=torch.Size([16, 1, 512])
+                image_latent_goal:,<class 'torch.Tensor'>,shape=torch.Size([16, 512])
+                '''
+                s_batch_len += 1
+            elif 'target' in self.modality_scope:
+                t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
+                    dataset_batch, is_target=True)
+                t_batch_len += 1
+            else:
+                raise KeyError(f'[MDTVDomainAdaptVisualEncoder] batch key:{self.modality_scope} not supported')
+
+            batch_size[self.modality_scope] = dataset_batch["actions"].shape[0]
+            total_bs += dataset_batch["actions"].shape[0]
+
+        # Domain Adaptation Loss
+        ###########################
+        # 2.1 train discriminator #
+        ###########################
+        d_opt.zero_grad()
+        da_d_loss = self.da_loss.forward(
+            t_perceptual_emb['state_images'].detach(),  # avoid grad
+            s_perceptual_emb['state_images'].detach(),  # avoid grad
+            is_discriminator_batch=True,
+        )  # ADDALoss.forward()
+        self.manual_backward(da_d_loss)
+        d_opt.step()
+
+        ############################
+        # 2.2 train target encoder #
+        ############################
+        d_opt.zero_grad()  # question: is this important?
+        g_opt.zero_grad()
+        da_g_loss = self.da_loss.forward(
+            t_perceptual_emb['state_images'],
+            s_perceptual_emb['state_images'].detach(),  # not used
+            is_discriminator_batch=False,
+        )
+        self.manual_backward(da_g_loss)
+        g_opt.step()
+        total_loss += da_g_loss + da_d_loss
+
+        batch_len = s_batch_len + t_batch_len
+        total_loss = total_loss / batch_len  # divide accumulated gradients by number of datasets
+        cont_loss = cont_loss / batch_len  # not used
+        action_loss = action_loss / batch_len  # not used
+        img_gen_loss = img_gen_loss / batch_len  # not used
+        da_d_loss = da_d_loss / batch_len
+        da_g_loss = da_g_loss / t_batch_len
+        da_loss = da_d_loss + da_g_loss
+
+        # Log the metrics
+        # self.on_before_zero_grad()
+        self._log_training_metrics(action_loss, total_loss, cont_loss, img_gen_loss, da_d_loss, da_g_loss, total_bs)
+
+        return total_loss
+
     def training_step(self, batch: Dict[str, Dict], batch_idx: int,
                       dataloader_idx: int = 0) -> torch.Tensor:  # type: ignore
         """
@@ -1104,6 +1194,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         Returns:
             loss tensor
         """
+        return self.training_step_together(batch, batch_idx, dataloader_idx)
 
         g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training
         # g_sch, d_sch = self.lr_schedulers()

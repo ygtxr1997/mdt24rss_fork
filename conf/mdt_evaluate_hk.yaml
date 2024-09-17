@@ -20,7 +20,7 @@ wandb:
   entity: gavinyuan
 debug: False
 dataset_path: /home/geyuan/code/mdt24rss_fork/dataset/task_D_D
-train_folder: /mnt/dongxu-fs1/data-ssd/geyuan/code/mdt24rss_fork/logs/runs/2024-09-04/21-53-36
+train_folder: /mnt/dongxu-fs1/data-ssd/geyuan/code/mdt24rss_fork/logs/runs/2024-09-17/11-35-19
 model_name: mdt_test
 device: 0
 sampler_type: ddim
