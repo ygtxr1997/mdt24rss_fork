@@ -1,7 +1,7 @@
 """
 Implements ADDA:
 Adversarial Discriminative Domain Adaptation, Tzeng et al. (2017)
-Code referred from: https://github.com/jvanvugt/pytorch-domain-adaptation
+Code referred from: https://github.com/corenel/pytorch-adda
 """
 import argparse
 

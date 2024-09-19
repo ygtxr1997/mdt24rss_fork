@@ -1,4 +1,4 @@
-# conf/callbacks/rollout_h/default.yaml
+# conf/callbacks/rollout_lh/default.yaml
 defaults:
   - /callbacks/rollout/tasks@tasks: new_playtable_tasks
   - /annotations@val_annotations: new_playtable_validation
@@ -7,7 +7,7 @@ _recursive_: false
 env_cfg:
   _target_: mdt.wrappers.hulc_wrapper.HulcWrapper
 skip_epochs: ${rollout_lh_skip_epochs}
-rollout_freq: 5
+rollout_freq: 1
 num_videos: 0
 num_sequences: 100 # ori:1000
 replan_freq: 30

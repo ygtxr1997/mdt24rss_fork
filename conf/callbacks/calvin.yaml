@@ -1,8 +1,8 @@
 # conf/callbacks/calvin.yaml
 defaults:
   - rollout_lh: default
-  - checkpoint: lh_sr 
-  
+  - checkpoint: save_model  # ori:lh_sr
+
 
 ema:
   _target_: mdt.callbacks.ema.EMA

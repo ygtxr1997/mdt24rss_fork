@@ -33,7 +33,7 @@ multistep: 10
 p_last_state: 0
 gen_img_res: 112
 max_epochs: 20
-rollout_lh_skip_epochs: 19
+rollout_lh_skip_epochs: 1
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 12
@@ -43,7 +43,7 @@ benchmark_name: calvin_d
 
 trainer:
   gpus: ${devices}
-  precision: 16
+  precision: 32  # WGAN,WGAN-GP don't support fp16
   max_epochs: ${max_epochs}
   sync_batchnorm: false
   accelerator: auto

@@ -1,0 +1,1 @@
+_target_: mdt.callbacks.save_model.ManuallySaveModelCallback
