@@ -889,13 +889,13 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.automatic_optimization = False  # manually backward
         self.latent_dim = latent_dim
         img_gen['context_dim'] = self.latent_dim
-        self.source_img_encoder = VoltronTokenEncoder(
+        self.img_encoder = VoltronTokenEncoder(
             latent_dim=self.latent_dim,
             model_type='v-cond',
             device=self.device,
             cache=voltron_cache,
         )
-        self.source_perceiver = PerceiverResampler(
+        self.perceiver = PerceiverResampler(
             dim=perceiver_dim,
             depth=perceiver_depth,
             dim_head=perceiver_dim_head,
@@ -955,8 +955,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             raise ValueError('[MDTVDomainAdaptVisualEncoder] ckpt_path must be provided!')
 
         # Create model copies for domain adaptation AFTER loading pretrained weights
-        self.img_encoder = copy.deepcopy(self.source_img_encoder)
-        self.perceiver = copy.deepcopy(self.source_perceiver)
+        self.source_img_encoder = copy.deepcopy(self.img_encoder)
+        self.source_perceiver = copy.deepcopy(self.perceiver)
         # For domain adaptation
         self.da_loss = hydra.utils.instantiate(domain_adapt).to(self.device)
         self.cache_da_d_loss = 0.
@@ -975,12 +975,13 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
 
             # Convert list of tensors to a state_dict format
             ema_weights_dict = {name: ema_weights_list[i] for i, (name, _) in enumerate(self.named_parameters())}
-
-            self.load_state_dict(ema_weights_dict)
-            print("Successfully loaded EMA weights from checkpoint!")
+            missing_keys, unexpected_keys = self.load_state_dict(ema_weights_dict)
+            print(f"Successfully loaded EMA weights from checkpoint! "
+                  f"missing: {missing_keys}, unexpected: {unexpected_keys}")
         else:
             self.load_state_dict(checkpoint_data['state_dict'])
         print("Successfully loaded weights from checkpoint!")
+        exit()
 
     def configure_optimizers(self):
         """
@@ -1006,7 +1007,6 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         #     {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
         #     {"params": self.logit_scale, "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
         # ])
-        self.set_requires_grad(self.model.inner_model, False)
         self.set_requires_grad(self.visual_goal, False)
         self.set_requires_grad(self.gen_img, False)
         self.set_requires_grad(self.source_perceiver, False)
@@ -1016,6 +1016,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         g_optim_groups.extend([
             {"params": self.perceiver.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.img_encoder.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            # {"params": self.model.inner_model.get_enc_only_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
         ])
         d_optim_groups.extend([
             {"params": self.da_loss.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay}
@@ -1023,6 +1024,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.da_loss, True)
         self.set_requires_grad(self.perceiver, True)
         self.set_requires_grad(self.img_encoder, True)
+        # self.set_requires_grad(self.model.inner_model, True)
 
         g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
                                         betas=self.optimizer_config.betas)
@@ -1179,6 +1181,116 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
 
         return total_loss
 
+    def training_step_by_batch(self, batch, batch_idx, dataloader_idx: int = 0):
+        g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training
+        # g_sch, d_sch = self.lr_schedulers()
+
+        is_discriminator_batch = (batch_idx % 2) < 1  # true:update discriminator; false:update encoder
+        if is_discriminator_batch:
+            # update D
+            d_opt.zero_grad()
+            self.set_requires_grad(self.img_encoder, False)
+            self.set_requires_grad(self.perceiver, False)
+            self.set_requires_grad(self.model.inner_model, False)
+            opt = d_opt
+            # sch = g_sch
+        else:
+            # update G
+            d_opt.zero_grad()
+            g_opt.zero_grad()
+            self.set_requires_grad(self.img_encoder, True)
+            self.set_requires_grad(self.perceiver, True)
+            self.set_requires_grad(self.model.inner_model, True)
+            opt = g_opt
+            # sch = d_sch
+
+        total_loss, action_loss, cont_loss, id_loss, img_gen_loss, da_d_loss, da_g_loss = (
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+        )
+        encoders_dict = {}
+        batch_size: Dict[str, int] = {}
+        s_batch_len = 0
+        t_batch_len = 0
+        total_bs = 0
+        s_perceptual_emb = None
+        t_perceptual_emb = None
+        for self.modality_scope, dataset_batch in batch.items():  # 'lang_source', 'lang_target', 'vis_source', 'vis_target'
+            if 'lang' in self.modality_scope:  # skip:'lang_source', 'lang_target'
+                continue
+            if 'source' in self.modality_scope:
+                if not is_discriminator_batch:  # only used for updating discriminator
+                    continue
+                # Compute the required embeddings
+                s_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
+                    dataset_batch, is_target=False)
+                '''
+                perceptual_emb:: Dict,keys=dict_keys(['state_images', 'modality'])
+                -state_images,<class 'torch.Tensor'>,shape=torch.Size([16, 3, 384])
+                -modality:<class 'str'>,len=4
+                latent_goal:,<class 'torch.Tensor'>,shape=torch.Size([16, 1, 512])
+                image_latent_goal:,<class 'torch.Tensor'>,shape=torch.Size([16, 512])
+                '''
+                s_batch_len += 1
+            elif 'target' in self.modality_scope:
+                t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
+                    dataset_batch, is_target=True)
+                t_batch_len += 1
+            else:
+                raise KeyError(f'[MDTVDomainAdaptVisualEncoder] batch key:{self.modality_scope} not supported')
+
+            batch_size[self.modality_scope] = dataset_batch["actions"].shape[0]
+            total_bs += dataset_batch["actions"].shape[0]
+
+        # Domain Adaptation Loss
+        if is_discriminator_batch:
+            # update D
+
+            # # Clamp parameters to a range [-c, c], c=self.weight_cliping_limit
+            # for p in self.da_loss.parameters():
+            #     p.data.clamp_(-self.weight_cliping_limit, self.weight_cliping_limit)
+
+            da_d_loss = self.da_loss.forward(
+                t_perceptual_emb['state_images'].detach(),  # avoid grad of G_target
+                s_perceptual_emb['state_images'].detach(),  # avoid grad of G_source
+                is_discriminator_batch=True,
+            )
+            self.cache_da_d_loss = da_d_loss
+            da_g_loss = self.cache_da_g_loss
+        else:
+            # update G
+            s_perceptual_emb = t_perceptual_emb  # not used
+            da_g_loss = self.da_loss.forward(
+                t_perceptual_emb['state_images'],           # update G_target
+                s_perceptual_emb['state_images'].detach(),  # avoid grad of G_source
+                is_discriminator_batch=False,
+            )
+            self.cache_da_g_loss = da_g_loss
+            da_d_loss = self.cache_da_d_loss
+
+        batch_len = s_batch_len + t_batch_len
+        total_loss = total_loss / batch_len  # divide accumulated gradients by number of datasets
+        cont_loss = cont_loss / batch_len  # not used
+        action_loss = action_loss / batch_len  # not used
+        img_gen_loss = img_gen_loss / batch_len  # not used
+        da_d_loss = da_d_loss / batch_len
+        da_g_loss = da_g_loss / t_batch_len
+        da_loss = da_d_loss if is_discriminator_batch else da_g_loss
+
+        # Log the metrics
+        # self.on_before_zero_grad()
+        self._log_training_metrics(action_loss, total_loss, cont_loss, img_gen_loss, da_d_loss, da_g_loss, total_bs)
+
+        self.manual_backward(da_loss)
+        opt.step()
+        # sch.step()
+        return total_loss
+
     def training_step(self, batch: Dict[str, Dict], batch_idx: int,
                       dataloader_idx: int = 0) -> torch.Tensor:  # type: ignore
         """
@@ -1194,6 +1306,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         Returns:
             loss tensor
         """
+        return self.training_step_by_batch(batch=batch, batch_idx=batch_idx, dataloader_idx=dataloader_idx)
         return self.training_step_together(batch, batch_idx, dataloader_idx)
 
         g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training

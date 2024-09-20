@@ -57,14 +57,14 @@ class MDTVTransformer(nn.Module):
         action_seq_len: int,
         goal_drop: float = 0.1,
         bias=False,
-        use_mlp_goal: bool = False,
+        use_mlp_goal: bool = False,  # used:True
         use_abs_pos_emb: bool = True,
         use_rot_embed: bool = False,
         rotary_xpos: bool = False,
         linear_output: bool = True,
         use_ada_conditioning: bool = False,
         use_noise_encoder: bool = False,
-        use_modality_encoder: bool = False,
+        use_modality_encoder: bool = False,  # used:True
     ):
         super().__init__()
         self.device = device
@@ -79,13 +79,13 @@ class MDTVTransformer(nn.Module):
         self.use_modality_encoder = use_modality_encoder
         seq_size = goal_seq_len + obs_seq_len * self.n_obs_token + action_seq_len
         print(f"obs dim: {obs_dim}, goal_dim: {goal_dim}, action_dim: {action_dim}, proprio_dim: {proprio_dim}")
-        self.tok_emb = nn.Linear(obs_dim, embed_dim)
+        self.tok_emb = nn.Linear(obs_dim, embed_dim)  # encoder
         if use_mlp_goal:
             self.goal_emb = nn.Sequential(
                 nn.Linear(goal_dim, embed_dim * 2),
                 nn.GELU(),
                 nn.Linear(embed_dim * 2, embed_dim)
-            )
+            )  # encoder
         else:
             self.goal_emb = nn.Linear(goal_dim, embed_dim)
         if self.use_modality_encoder:
@@ -94,7 +94,7 @@ class MDTVTransformer(nn.Module):
                     nn.Linear(goal_dim, embed_dim * 2),
                     nn.GELU(),
                     nn.Linear(embed_dim * 2, embed_dim)
-                )
+                )  # encoder
             else:
                 self.lang_emb = nn.Linear(goal_dim, embed_dim)
         else:
@@ -122,7 +122,7 @@ class MDTVTransformer(nn.Module):
             use_rot_embed=use_rot_embed,
             rotary_xpos=rotary_xpos,
             mlp_pdrop=mlp_pdrop,
-        )
+        )  # encoder
 
         if self.use_ada_conditioning:
             self.decoder = TransformerFiLMDecoder(
@@ -160,7 +160,7 @@ class MDTVTransformer(nn.Module):
             nn.Linear(proprio_dim, embed_dim * 2),
             nn.Mish(),
             nn.Linear(embed_dim * 2, embed_dim),
-        ).to(self.device)
+        ).to(self.device)  # encoder
 
         self.block_size = block_size
         self.goal_seq_len = goal_seq_len
@@ -171,7 +171,7 @@ class MDTVTransformer(nn.Module):
             nn.Linear(embed_dim, embed_dim * 2),
             nn.Mish(),
             nn.Linear(embed_dim * 2, embed_dim),
-        ).to(self.device)
+        ).to(self.device)  # encoder
 
         self.action_emb = nn.Linear(action_dim, embed_dim)
 
@@ -235,6 +235,15 @@ class MDTVTransformer(nn.Module):
         pred_actions = self.action_pred(x)
         return pred_actions
 
+    def get_enc_only_params(self):
+        params_list = list(self.tok_emb.parameters())
+        params_list += list(self.goal_emb.parameters())
+        params_list += list(self.lang_emb.parameters())
+        params_list += list(self.encoder.parameters())
+        params_list += list(self.proprio_emb.parameters())
+        params_list += list(self.sigma_emb.parameters())
+        return params_list
+
     def process_sigma_embeddings(self, sigma):
         sigmas = sigma.log() / 4
         sigmas = einops.rearrange(sigmas, 'b -> b 1')
@@ -261,11 +270,15 @@ class MDTVTransformer(nn.Module):
         states_global = self.tok_emb(states['state_images'])
         if 'state_obs' in states:
             proprio_embed = self.proprio_emb(states['state_obs'])
+            print('[Warning] Using state_obs!')
         else:
             proprio_embed = None
         return states_global, proprio_embed
 
     def process_goal_embeddings(self, goals, states):
+        if self.use_modality_encoder:
+            assert 'modality' in states, "states have no key: 'modality'"
+            assert states['modality'] in ('lang', 'vis'), "states['modality'] must be 'lang' or 'vis'"
         if self.use_modality_encoder and 'modality' in states and states['modality'] == 'lang':
             goal_embed = self.lang_emb(goals)
         else:

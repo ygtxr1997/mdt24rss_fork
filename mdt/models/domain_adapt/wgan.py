@@ -48,6 +48,9 @@ class Discriminator(torch.nn.Module):
 
 
 class WGAN_CP(torch.nn.Module):
+    """
+    Code refers to: https://github.dev/aadhithya/gan-zoo-pytorch/blob/master/models/wgan_gp.py
+    """
     def __init__(self):
         super(WGAN_CP, self).__init__()
         self.discriminator = Discriminator()
@@ -79,11 +82,11 @@ class WGAN_GP(torch.nn.Module):
     def __init__(self, in_dim: int = 3 * 384):
         super(WGAN_GP, self).__init__()
         self.discriminator = nn.Sequential(
-            nn.Linear(in_dim, 3 * 384),
-            nn.ReLU(),
-            nn.Linear(3 * 384, 3 * 384),
-            nn.ReLU(),
-            nn.Linear(3 * 384, 1)
+            nn.Linear(in_dim, 512),
+            nn.GELU(),
+            nn.Linear(512, 128),
+            nn.GELU(),
+            nn.Linear(128, 1)
         )
         self.gamma = 10
         self.wd_clf = 1
@@ -105,9 +108,8 @@ class WGAN_GP(torch.nn.Module):
             critic_cost = -wasserstein_distance + self.gamma * gp
             loss = critic_cost
         else:
-            d_source = self.discriminator(source_feat)
-            d_target = self.discriminator(target_feat)
-            wasserstein_distance = d_source.mean() - d_target.mean()
+            d_target = self.discriminator(target_feat)  # large:real
+            wasserstein_distance = -d_target.mean()
             loss = self.wd_clf * wasserstein_distance
         return loss
 
