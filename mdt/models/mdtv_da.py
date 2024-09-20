@@ -981,7 +981,6 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         else:
             self.load_state_dict(checkpoint_data['state_dict'])
         print("Successfully loaded weights from checkpoint!")
-        exit()
 
     def configure_optimizers(self):
         """
