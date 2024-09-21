@@ -79,17 +79,20 @@ class WGAN_CP(torch.nn.Module):
 
 from torch.autograd import grad
 class WGAN_GP(torch.nn.Module):
-    def __init__(self, in_dim: int = 3 * 384):
+    def __init__(self, in_dim: int = 3 * 512):
         super(WGAN_GP, self).__init__()
         self.discriminator = nn.Sequential(
-            nn.Linear(in_dim, 512),
+            nn.Linear(in_dim, in_dim // 2),
             nn.GELU(),
-            nn.Linear(512, 128),
+            nn.Linear(in_dim // 2, in_dim // 4),
             nn.GELU(),
-            nn.Linear(128, 1)
+            nn.Linear(in_dim // 4, 1),
+            nn.Sigmoid(),
         )
-        self.gamma = 10
+        self.gamma = 1
         self.wd_clf = 1
+
+        self.cache_gp = 0.
 
     def forward(self, target_feat, source_feat=None, is_discriminator_batch: bool = True, gt_labels=None,):
         if source_feat is None:
@@ -101,7 +104,7 @@ class WGAN_GP(torch.nn.Module):
         device = source_feat.device
 
         if is_discriminator_batch:
-            gp = self.gradient_penalty(self.discriminator, source_feat, target_feat, device)
+            self.cache_gp = gp = self.gradient_penalty(self.discriminator, source_feat, target_feat, device)
             d_source = self.discriminator(source_feat)
             d_target = self.discriminator(target_feat)
             wasserstein_distance = d_source.mean() - d_target.mean()
@@ -111,7 +114,11 @@ class WGAN_GP(torch.nn.Module):
             d_target = self.discriminator(target_feat)  # large:real
             wasserstein_distance = -d_target.mean()
             loss = self.wd_clf * wasserstein_distance
-        return loss
+        return {
+            'loss': loss,
+            'w_dist': wasserstein_distance,
+            'gp': self.cache_gp,
+        }
 
     def gradient_penalty(self, critic, h_s, h_t, device):
         # based on: https://github.com/caogang/wgan-gp/blob/master/gan_cifar10.py#L116
