@@ -98,6 +98,10 @@ class WGAN_GP(torch.nn.Module):
         if source_feat is None:
             assert is_discriminator_batch, "source_feat should be given when is_discriminator_batch=True"
             source_feat = target_feat
+        if source_feat.shape[0] > target_feat.shape[0]:
+            source_feat = source_feat[:target_feat.shape[0]]
+        elif target_feat.shape[0] > source_feat.shape[0]:
+            target_feat = target_feat[:source_feat.shape[0]]
         bs = source_feat.shape[0]
         source_feat = source_feat.view(bs, -1)
         target_feat = target_feat.view(bs, -1)
