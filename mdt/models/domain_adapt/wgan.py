@@ -87,9 +87,8 @@ class WGAN_GP(torch.nn.Module):
             nn.Linear(in_dim // 2, in_dim // 4),
             nn.GELU(),
             nn.Linear(in_dim // 4, 1),
-            nn.Sigmoid(),
         )
-        self.gamma = 1
+        self.gamma = 10
         self.wd_clf = 1
 
         self.cache_gp = 0.

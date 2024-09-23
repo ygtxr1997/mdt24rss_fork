@@ -999,6 +999,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.visual_goal, False)
         self.set_requires_grad(self.source_perceiver, False)
         self.set_requires_grad(self.source_img_encoder, False)
+        self.set_requires_grad(self.source_model, False)
         self.set_requires_grad(self.gen_img, False)
         self.set_requires_grad(self.clip_proj, False)
         self.logit_scale.requires_grad = False
