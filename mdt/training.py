@@ -27,7 +27,7 @@ from mdt.utils.utils import (
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(config_path="../conf", config_name="da_d_hk")
+@hydra.main(config_path="../conf", config_name="da_d_slurm")
 # @hydra.main(config_path="../logs/runs/2023-09-10/17-52-50/.hydra", config_name="config")
 def train(cfg: DictConfig) -> None:
     """

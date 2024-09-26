@@ -1000,14 +1000,14 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.source_perceiver, False)
         self.set_requires_grad(self.source_img_encoder, False)
         self.set_requires_grad(self.source_model, False)
-        self.set_requires_grad(self.gen_img, False)
+        self.set_requires_grad(self.gen_img, True)
         self.set_requires_grad(self.clip_proj, False)
         self.logit_scale.requires_grad = False
         g_optim_groups.extend([
             {"params": self.perceiver.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.img_encoder.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.model.inner_model.get_enc_only_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay}
+            {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay}
         ])
         # g_optim_groups.extend([
         #     {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
@@ -1183,7 +1183,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             self.set_requires_grad(self.img_encoder, False)
             self.set_requires_grad(self.perceiver, False)
             self.set_requires_grad(self.model.inner_model, False)
-            # self.set_requires_grad(self.gen_img, False)
+            self.set_requires_grad(self.gen_img, False)
             opt = d_opt
             # sch = g_sch
         else:
@@ -1193,7 +1193,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             self.set_requires_grad(self.img_encoder, True)
             self.set_requires_grad(self.perceiver, True)
             self.set_requires_grad(self.model.inner_model, True)
-            # self.set_requires_grad(self.gen_img, True)
+            self.set_requires_grad(self.gen_img, True)
             opt = g_opt
             # sch = d_sch
 
