@@ -1183,7 +1183,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             self.set_requires_grad(self.img_encoder, False)
             self.set_requires_grad(self.perceiver, False)
             self.set_requires_grad(self.model.inner_model, False)
-            self.set_requires_grad(self.gen_img, False)
+            # self.set_requires_grad(self.gen_img, False)
             opt = d_opt
             # sch = g_sch
         else:
@@ -1193,7 +1193,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             self.set_requires_grad(self.img_encoder, True)
             self.set_requires_grad(self.perceiver, True)
             self.set_requires_grad(self.model.inner_model, True)
-            self.set_requires_grad(self.gen_img, True)
+            # self.set_requires_grad(self.gen_img, True)
             opt = g_opt
             # sch = d_sch
 
@@ -1264,7 +1264,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 )  # encoder doesn't use actions
                 latent_encoder_emb = self.source_model.inner_model.latent_encoder_emb
 
-                s_latent_encoder_emb_dict[self.modality_scope[len('source_'):]] = latent_encoder_emb  # 'lang','vis'
+                # s_latent_encoder_emb_dict[self.modality_scope[len('source_'):]] = s_perceptual_emb['state_images']  # 'lang','vis'
+                s_latent_encoder_emb_dict[self.modality_scope[len('source_'):]] = latent_encoder_emb
 
             elif 'target' in self.modality_scope:
                 t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
@@ -1286,19 +1287,19 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 )  # encoder doesn't use actions
                 latent_encoder_emb = self.model.inner_model.latent_encoder_emb
 
-                # # Compute the masked generative foresight loss (only for target)
-                # if not isinstance(self.gen_img, NoEncoder):
-                #     rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
-                #     rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
-                #     img_gen_frame_diff = dataset_batch[
-                #         'future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
-                #     # combine both goal images
-                #     rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
-                #     img_gen_embed = latent_encoder_emb
-                #     img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
-                #                                                   img_gen_frame_diff=img_gen_frame_diff)
-                #     img_gen_loss += img_gen_loss_part * self.masked_beta
-                #
+                # Compute the masked generative foresight loss (only for target)
+                if not isinstance(self.gen_img, NoEncoder):
+                    rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
+                    rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
+                    img_gen_frame_diff = dataset_batch[
+                        'future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
+                    # combine both goal images
+                    rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
+                    img_gen_embed = latent_encoder_emb
+                    img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
+                                                                  img_gen_frame_diff=img_gen_frame_diff)
+                    img_gen_loss += img_gen_loss_part * self.masked_beta * 10.  # 10 times
+
                 # # Compute the Contrastive Latent Alignment Loss (only for target)
                 # cont_loss_part = self.compute_contrastive_loss(
                 #     t_perceptual_emb,
@@ -1310,7 +1311,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 # )
                 # cont_loss += self.cont_alpha * cont_loss_part
 
-                t_latent_encoder_emb_dict[self.modality_scope[len('target_'):]] = latent_encoder_emb  # 'lang','vis'
+                # t_latent_encoder_emb_dict[self.modality_scope[len('target_'):]] = t_perceptual_emb['state_images']  # 'lang','vis'
+                t_latent_encoder_emb_dict[self.modality_scope[len('target_'):]] = latent_encoder_emb
 
             else:
                 raise KeyError(f'[MDTVDomainAdaptVisualEncoder] batch key:{self.modality_scope} not supported')

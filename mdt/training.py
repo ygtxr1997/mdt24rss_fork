@@ -186,7 +186,7 @@ if __name__ == "__main__":
 
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "5,6"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "4,5,6"
     print(torch.cuda.is_available())
     print(torch.cuda.device_count())
     os.environ["TOKENIZERS_PARALLELISM"] = 'True'

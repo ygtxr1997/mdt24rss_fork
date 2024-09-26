@@ -7,7 +7,7 @@ defaults:
   - visual_goal: clip
   - img_gen: masked_transformer
   - model: mdtv_transformer
-  - domain_adapt: wgan  # options:adda,wgan
+  - domain_adapt: wgan  # options:adda,wgan,wgan_1152
 
 
 latent_dim: 384
