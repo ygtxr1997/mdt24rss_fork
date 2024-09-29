@@ -101,8 +101,9 @@ class ClearDataset(Dataset):
         action_seq_len: int = -1,  # used:10
         future_range: int = -1,  # used:29
         img_gen_frame_diff: int = 3,  # used:3
-        ## LitData ##
-        lit_data_root: str = "",
+        ## Extracted speed-up ##
+        use_extracted_rel_actions: bool = False,
+        extracted_dir: str = 'extracted/',
     ):
         self.observation_space = obs_space
         self.proprio_state = proprio_state
@@ -154,18 +155,20 @@ class ClearDataset(Dataset):
         self.img_gen_frame_diff = img_gen_frame_diff
         self.random_frame_diff = False if img_gen_frame_diff > -1 else True
 
-        ## LitData ##
-        # from debug.de_dataset import DebugLitTrainDataset
-        # self.lit_dataset = DebugLitTrainDataset()
-        assert os.path.exists(lit_data_root)
-        self.lit_data_root: List[int] = lit_data_root
-        train_val_spilt = os.path.basename(os.path.abspath(datasets_dir))  # 'training', 'validation'
-        task_name = os.path.basename(os.path.dirname(os.path.abspath(datasets_dir)))  # 'task_XXX_D'
-        self.lit_data_path = os.path.join(lit_data_root, task_name, train_val_spilt)
-        with open(os.path.join(self.lit_data_path, "ep_npz_names.list"), "r") as f:
-            self.lit_ep_npz_names = [int(x.strip()) for x in f.readlines()]
-            self.lit_ep_npz_name_to_lit_idx = {self.lit_ep_npz_names[i] : i for i in range(len(self.lit_ep_npz_names))}
-        self.lit_ep_rel_actions: np.ndarray = np.load(os.path.join(self.lit_data_path, "ep_rel_actions.npy"))
+        # Using extracted npy to reduce bandwidth of data loading
+        self.use_extracted_rel_actions = use_extracted_rel_actions
+        if use_extracted_rel_actions:
+            self.extracted_dir = extracted_dir
+            if not os.path.exists(extracted_dir):  # maybe a relative path
+                self.extracted_dir = os.path.join(self.abs_datasets_dir, "extracted")  # convert to abs path
+                assert os.path.exists(self.extracted_dir), "extracted dir not found!"
+            with open(os.path.join(self.extracted_dir, "ep_npz_names.list"), "r") as f:
+                self.extracted_ep_npz_names = [int(x.strip()) for x in f.readlines()]
+                self.extracted_ep_npz_name_to_npy_idx = {self.extracted_ep_npz_names[i]: i
+                                                         for i in range(len(self.extracted_ep_npz_names))}
+                # key: int, original episode fn's index; value: int, extracted npy's inner index
+            self.extracted_ep_rel_actions: np.ndarray = np.load(os.path.join(self.extracted_dir, "ep_rel_actions.npy"))
+            logger.info(f"Extracted files loaded from {self.extracted_dir}")
 
     def __getitem__(self, idx: Union[int, Tuple[int, int]]) -> Dict:
         """
@@ -539,17 +542,16 @@ class ClearDataset(Dataset):
             img_gen_frame_diff = self.img_gen_frame_diff  # used:3
         gen_img_idx = start_idx + self.obs_seq_len + img_gen_frame_diff - 1  # episode_XXX.npz
 
-        ''' Episode_*.npz '''
-        op_read_1by1 = False
-        if op_read_1by1:
-            ## Op1. original one-by-one
+        if not self.use_extracted_rel_actions:
+            # Op1. original reading actions from episode_xxx.npz one-by-one
             episodes = [self.load_file(self._get_episode_name(file_idx)) for file_idx in range(start_idx, end_idx)]
         else:
-            ## Op2. read from single file
-            episodes = [self.load_file(self._get_episode_name(file_idx)) for file_idx in range(start_idx, start_idx + self.obs_seq_len)]
+            # Op2. reading actions from a single ep_rel_actions.npy file
+            episodes = [self.load_file(self._get_episode_name(file_idx)) for file_idx in
+                        range(start_idx, start_idx + self.obs_seq_len)]
             gen_img_episode = self.load_file(self._get_episode_name(gen_img_idx))
-            lit_indices = [self.lit_ep_npz_name_to_lit_idx[file_idx] for file_idx in range(start_idx, end_idx)]
-            lit_actions = self.lit_ep_rel_actions[lit_indices, :]
+            ex_indices = [self.extracted_ep_npz_name_to_npy_idx[file_idx] for file_idx in range(start_idx, end_idx)]
+            ex_actions = self.extracted_ep_rel_actions[ex_indices, :]
 
         episode = {}
         ''' 
@@ -568,8 +570,8 @@ class ClearDataset(Dataset):
                 continue
 
             stacked_data = np.stack([ep[key] for ep in episodes])  # len=${act_seq_len},eg.10
-            if op_read_1by1:
-                ## Op1. original one-by-one
+            if not self.use_extracted_rel_actions:
+                # Op1. original reading actions from episode_xxx.npz one-by-one
                 if key == "rel_actions" or key == 'actions':
                     episode[key] = stacked_data[(self.obs_seq_len - 1):((self.obs_seq_len - 1) + self.action_seq_len), :]
                 else:
@@ -577,12 +579,11 @@ class ClearDataset(Dataset):
                         gen_img_static = stacked_data[self.obs_seq_len + img_gen_frame_diff - 1, :]
                     elif key == 'rgb_gripper':
                         gen_img_gripper = stacked_data[self.obs_seq_len + img_gen_frame_diff - 1, :]
-
                     episode[key] = stacked_data[:self.obs_seq_len, :]
             else:
-                ## Op2. read from single file
+                # Op2. reading actions from a single ep_rel_actions.npy file
                 if key == "rel_actions" or key == 'actions':
-                    episode[key] = lit_actions[(self.obs_seq_len - 1):((self.obs_seq_len - 1) + self.action_seq_len), :]
+                    episode[key] = ex_actions[(self.obs_seq_len - 1):((self.obs_seq_len - 1) + self.action_seq_len), :]
                 else:
                     if key == 'rgb_static':
                         gen_img_static = gen_img_episode[key]

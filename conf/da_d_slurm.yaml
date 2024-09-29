@@ -9,7 +9,6 @@ defaults:
 root_home: /public/home/group_xudong/gavinyuan
 source_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_ABC_D
 target_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_D_D
-lit_data_root: ${root_home}/code/mdt24rss_fork/dataset/litdata/
 lang_folder: lang_clip_resnet50
 vis_clip_model_name: ViT-B/16
 clip_lang_model_name: ViT-B/32
@@ -38,6 +37,7 @@ window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 12
 img_gen_frame_diff: 3
+use_extracted_rel_actions: true
 benchmark_name: calvin_d
 
 

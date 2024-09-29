@@ -1000,14 +1000,14 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.source_perceiver, False)
         self.set_requires_grad(self.source_img_encoder, False)
         self.set_requires_grad(self.source_model, False)
-        self.set_requires_grad(self.gen_img, True)
+        self.set_requires_grad(self.gen_img, False)
         self.set_requires_grad(self.clip_proj, False)
         self.logit_scale.requires_grad = False
         g_optim_groups.extend([
             {"params": self.perceiver.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.img_encoder.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.model.inner_model.get_enc_only_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay}
+            # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay}
         ])
         # g_optim_groups.extend([
         #     {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
@@ -1034,21 +1034,21 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             g_scheduler = TriStageLRScheduler(g_optimizer, g_lr_configs)
             g_lr_scheduler = {
                 "scheduler": g_scheduler,
-                # "interval": 'step',
-                # "frequency": 1,
+                "interval": 'step',
+                "frequency": 1,
             }
             d_scheduler = TriStageLRScheduler(d_optimizer, lr_configs)
             d_lr_scheduler = {
                 "scheduler": d_scheduler,
-                # "interval": 'step',
-                # "frequency": 1,
+                "interval": 'step',
+                "frequency": 1,
             }
             return (
                 {"optimizer": g_optimizer,
-                 # "lr_scheduler": g_lr_scheduler,
+                 "lr_scheduler": g_lr_scheduler,
                  },
                 {"optimizer": d_optimizer,
-                 # "lr_scheduler": d_lr_scheduler,
+                 "lr_scheduler": d_lr_scheduler,
                  },
             )
         else:
@@ -1174,7 +1174,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
 
     def training_step_by_batch(self, batch, batch_idx, dataloader_idx: int = 0):
         g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training
-        # g_sch, d_sch = self.lr_schedulers()
+        g_sch, d_sch = self.lr_schedulers()
 
         is_discriminator_batch = (batch_idx % 2) < 1  # true:update discriminator; false:update encoder
         if is_discriminator_batch:
@@ -1183,9 +1183,9 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             self.set_requires_grad(self.img_encoder, False)
             self.set_requires_grad(self.perceiver, False)
             self.set_requires_grad(self.model.inner_model, False)
-            self.set_requires_grad(self.gen_img, False)
+            # self.set_requires_grad(self.gen_img, False)
             opt = d_opt
-            # sch = g_sch
+            sch = d_sch
         else:
             # update G
             d_opt.zero_grad()
@@ -1193,9 +1193,9 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             self.set_requires_grad(self.img_encoder, True)
             self.set_requires_grad(self.perceiver, True)
             self.set_requires_grad(self.model.inner_model, True)
-            self.set_requires_grad(self.gen_img, True)
+            # self.set_requires_grad(self.gen_img, True)
             opt = g_opt
-            # sch = d_sch
+            sch = g_sch
 
         total_loss, action_loss, cont_loss, id_loss, img_gen_loss, da_d_loss, da_g_loss = (
             torch.tensor(0.0).to(self.device),
@@ -1287,18 +1287,18 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 )  # encoder doesn't use actions
                 latent_encoder_emb = self.model.inner_model.latent_encoder_emb
 
-                # Compute the masked generative foresight loss (only for target)
-                if not isinstance(self.gen_img, NoEncoder):
-                    rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
-                    rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
-                    img_gen_frame_diff = dataset_batch[
-                        'future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
-                    # combine both goal images
-                    rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
-                    img_gen_embed = latent_encoder_emb
-                    img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
-                                                                  img_gen_frame_diff=img_gen_frame_diff)
-                    img_gen_loss += img_gen_loss_part * self.masked_beta * 10.  # 10 times
+                # # Compute the masked generative foresight loss (only for target)
+                # if not isinstance(self.gen_img, NoEncoder):
+                #     rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
+                #     rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
+                #     img_gen_frame_diff = dataset_batch[
+                #         'future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
+                #     # combine both goal images
+                #     rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
+                #     img_gen_embed = latent_encoder_emb
+                #     img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
+                #                                                   img_gen_frame_diff=img_gen_frame_diff)
+                #     img_gen_loss += img_gen_loss_part * self.masked_beta * 10.  # 10 times
 
                 # # Compute the Contrastive Latent Alignment Loss (only for target)
                 # cont_loss_part = self.compute_contrastive_loss(
@@ -1374,7 +1374,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
 
         self.manual_backward(total_loss)
         opt.step()
-        # sch.step()
+        sch.step()
         return total_loss
 
     def training_step(self, batch: Dict[str, Dict], batch_idx: int,

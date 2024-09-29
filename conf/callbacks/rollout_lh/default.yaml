@@ -9,7 +9,7 @@ env_cfg:
 skip_epochs: ${rollout_lh_skip_epochs}
 rollout_freq: 6
 num_videos: 0
-num_sequences: 1000 # ori:1000
+num_sequences: 100 # ori:1000
 replan_freq: 30
 ep_len: 360
 empty_cache: false
