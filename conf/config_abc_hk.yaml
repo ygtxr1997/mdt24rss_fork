@@ -1,6 +1,6 @@
 defaults:
   - callbacks: calvin
-  - datamodule: calvin
+  - datamodule: calvin_clear
   - model: mdtv_agent # mdt_agent
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
@@ -18,7 +18,7 @@ max_window_size: 50
 future_range: 29
 seed: 242
 device: 'cuda'
-batch_size: 32 # 38 # 128
+batch_size: 128 # 38 # 128
 devices: 4
 goal_window_size: 1
 act_dim: 7
@@ -41,7 +41,7 @@ benchmark_name: calvin_abc # calvin_abcd
 
 trainer:
   gpus: ${devices}
-  precision: 16
+  precision: bf16
   max_epochs: ${max_epochs}
   sync_batchnorm: false
   accelerator: auto

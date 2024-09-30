@@ -1,6 +1,6 @@
 defaults:
   - callbacks: calvin
-  - datamodule: calvin
+  - datamodule: calvin_clear
   - model: mdtv_agent # or use mdt_agent
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
@@ -41,7 +41,7 @@ benchmark_name: calvin_d
 
 trainer:
   gpus: ${devices}
-  precision: 16
+  precision: bf16
   max_epochs: ${max_epochs}
   sync_batchnorm: false
   accelerator: auto
