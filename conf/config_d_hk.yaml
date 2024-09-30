@@ -6,7 +6,7 @@ defaults:
   - override hydra/hydra_logging: colorlog
 
 root_home: /home/geyuan
-root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_D_D
+root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_ABC_D
 lang_folder: lang_clip_resnet50
 vis_clip_model_name: ViT-B/16
 clip_lang_model_name: ViT-B/32
@@ -30,7 +30,7 @@ multistep: 10
 p_last_state: 0
 gen_img_res: 112
 max_epochs: 20
-rollout_lh_skip_epochs: 19
+rollout_lh_skip_epochs: 0
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 12
