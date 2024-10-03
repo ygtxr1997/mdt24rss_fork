@@ -82,13 +82,13 @@ class WGAN_GP(torch.nn.Module):
     def __init__(self, in_dim: int = 3 * 512):
         super(WGAN_GP, self).__init__()
         self.discriminator = nn.Sequential(
+            nn.Linear(in_dim, in_dim),
+            nn.GELU(),
             nn.Linear(in_dim, in_dim // 2),
             nn.GELU(),
-            nn.Linear(in_dim // 2, in_dim // 4),
-            nn.GELU(),
-            nn.Linear(in_dim // 4, 1),
+            nn.Linear(in_dim // 2, 1),
         )
-        self.gamma = 10
+        self.gamma = 1
         self.wd_clf = 1
 
         self.cache_gp = 0.

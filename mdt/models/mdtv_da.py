@@ -1174,7 +1174,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
 
     def training_step_by_batch(self, batch, batch_idx, dataloader_idx: int = 0):
         g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training
-        g_sch, d_sch = self.lr_schedulers()
+        # g_sch, d_sch = self.lr_schedulers()
 
         is_discriminator_batch = (batch_idx % 2) < 1  # true:update discriminator; false:update encoder
         if is_discriminator_batch:
@@ -1185,7 +1185,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             self.set_requires_grad(self.model.inner_model, False)
             # self.set_requires_grad(self.gen_img, False)
             opt = d_opt
-            sch = d_sch
+            # sch = d_sch
         else:
             # update G
             d_opt.zero_grad()
@@ -1195,7 +1195,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             self.set_requires_grad(self.model.inner_model, True)
             # self.set_requires_grad(self.gen_img, True)
             opt = g_opt
-            sch = g_sch
+            # sch = g_sch
 
         total_loss, action_loss, cont_loss, id_loss, img_gen_loss, da_d_loss, da_g_loss = (
             torch.tensor(0.0).to(self.device),
@@ -1374,7 +1374,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
 
         self.manual_backward(total_loss)
         opt.step()
-        sch.step()
+        # sch.step()
         return total_loss
 
     def training_step(self, batch: Dict[str, Dict], batch_idx: int,

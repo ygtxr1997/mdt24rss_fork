@@ -192,7 +192,7 @@ class RolloutLongHorizon(Callback):
                 log_rank_0(f"{i} / 5 subtasks: {n_success} / {len(results)} sequences, SR: {sr * 100:.1f}%")
             avg_seq_len = np.mean(results)
             pl_module.log("eval_lh/avg_seq_len", torch.tensor(avg_seq_len), on_epoch=True, sync_dist=True)
-            log_rank_0(f"Average successful sequence length: {avg_seq_len:.1f}")
+            log_rank_0(f"Average successful sequence length: {avg_seq_len:.3f}")
             print()
 
     def evaluate_policy(self, model):
