@@ -1,7 +1,7 @@
 defaults:
   - callbacks: calvin
   - datamodule: calvin_clear
-  - model: mdtv_agent # mdt_agent
+  - model: mdt_agent # mdt_agent
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 

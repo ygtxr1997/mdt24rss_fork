@@ -14,14 +14,14 @@ from tqdm import tqdm, trange
 
 
 class ADDALoss(nn.Module):
-    def __init__(self, in_dim: int = 3 * 384):
+    def __init__(self, in_dim: int = 3 * 512):
         super(ADDALoss, self).__init__()
         self.discriminator = nn.Sequential(
-            nn.Linear(in_dim, 3 * 384),
+            nn.Linear(in_dim, in_dim),
             nn.ReLU(),
-            nn.Linear(3 * 384, 3 * 384),
+            nn.Linear(in_dim, in_dim),
             nn.ReLU(),
-            nn.Linear(3 * 384, 2),
+            nn.Linear(in_dim, 2),
         )
         self.criterion = nn.CrossEntropyLoss()
 

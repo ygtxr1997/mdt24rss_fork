@@ -20,7 +20,7 @@ max_window_size: 50
 future_range: 29
 seed: 242
 device: 'cuda'
-batch_size: 64  # ori:128
+batch_size: 128  # ori:128
 devices: 4
 goal_window_size: 1
 act_dim: 7
@@ -32,7 +32,7 @@ multistep: 10
 p_last_state: 0
 gen_img_res: 112
 max_epochs: 19
-rollout_lh_skip_epochs: 6
+rollout_lh_skip_epochs: 2
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 12
