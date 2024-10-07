@@ -1,8 +1,7 @@
 # conf/callbacks/calvin.yaml
 defaults:
   - rollout_lh: default
-  - checkpoint: lh_sr  # ori:lh_sr
-  - manually_ckpt: save_model
+  - checkpoint: save_model  # ori:lh_sr
 
 
 ema:

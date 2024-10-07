@@ -1,5 +1,6 @@
 # 导入smtplib模块
 import smtplib
+import os
 
 # 从email.mime.multipart中导入MIMEMultipart类
 from email.mime.multipart import MIMEMultipart
@@ -63,6 +64,12 @@ message.attach(mailContent)
 
 # 6、发送邮件
 # 发送邮件：使用对象qqMail的sendmail方法发送邮件
-qqMail.sendmail(sender, receiver, message.as_string())
-# 输出"发送成功"
-print("E-mail sent successfully!")
+if os.environ.get('SLURM_PROCID') is not None:
+    if int(os.environ.get('SLURM_PROCID')) == 0:
+        qqMail.sendmail(sender, receiver, message.as_string())
+        print("E-mail sent successfully!")
+    else:
+        pass # do nothing
+else:
+    qqMail.sendmail(sender, receiver, message.as_string())
+    print("E-mail sent successfully!")

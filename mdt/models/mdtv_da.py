@@ -1030,7 +1030,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         if self.use_lr_scheduler:
             lr_configs = OmegaConf.create(self.lr_scheduler)
             g_lr_configs = OmegaConf.create(self.lr_scheduler)
-            g_lr_configs.lr = g_lr_configs.init_lr = 1e-5
+            # g_lr_configs.lr = g_lr_configs.init_lr = 1e-5
             g_scheduler = TriStageLRScheduler(g_optimizer, g_lr_configs)
             g_lr_scheduler = {
                 "scheduler": g_scheduler,
@@ -1106,8 +1106,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         s_perceptual_emb = None
         t_perceptual_emb = None
         for self.modality_scope, dataset_batch in batch.items():  # 'lang_source', 'lang_target', 'vis_source', 'vis_target'
-            if 'lang' in self.modality_scope:  # skip:'lang_source', 'lang_target'
-                continue
+            # if 'lang' in self.modality_scope:  # skip:'lang_source', 'lang_target'
+            #     continue
             if 'source' in self.modality_scope:
                 # Compute the required embeddings
                 s_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(

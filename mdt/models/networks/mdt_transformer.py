@@ -89,6 +89,7 @@ class MDTTransformer(nn.Module):
         self.action_dim = action_dim
         self.embed_dim = embed_dim
         self.latent_encoder_emb = None
+        self.cache_action_emb = None
 
         if use_mlp_goal:
             self.goal_emb = nn.Sequential(
@@ -204,16 +205,26 @@ class MDTTransformer(nn.Module):
             torch.nn.init.normal_(module.pos_emb, mean=0.0, std=0.02)
 
     def forward(self, states, actions, goals, sigma, uncond: Optional[bool] = False):
+        """
+        Args:
+            states: perceptual_emb
+            actions: noised actions
+            goals: gt latent goals
+            sigma: DDPM process
+            uncond: not used
+        Returns:
+        """
         context = self.enc_only_forward(states, actions, goals, sigma, uncond)
         pred_actions = self.dec_only_forward(context, actions, sigma)
         return pred_actions
 
     def enc_only_forward(self, states, actions, goals, sigma, uncond: Optional[bool] = False):
+        """ Will add pos_emb for actions """
         emb_t = self.process_sigma_embeddings(sigma) if not self.use_ada_conditioning else None
         goals = self.preprocess_goals(goals, 1, uncond)
         state_embed, proprio_states = self.process_state_embeddings(states)
         goal_embed = self.goal_emb(goals)
-        action_embed = self.action_emb(actions)
+        action_embed = self.action_emb(actions) if actions is not None else None
 
         if self.use_abs_pos_emb:
             goal_x, state_x, action_x, proprio_x = self.apply_position_embeddings(goal_embed, state_embed, action_embed, proprio_states, 1)
@@ -237,6 +248,8 @@ class MDTTransformer(nn.Module):
             x = self.decoder(action_x, emb_t, context)
         else:
             x = self.decoder(action_x, context)
+
+        self.cache_action_emb = x
 
         pred_actions = self.action_pred(x)
         return pred_actions
@@ -319,7 +332,7 @@ class MDTTransformer(nn.Module):
         position_embeddings = self.pos_emb
         goal_x = self.drop(goal_embed + position_embeddings[:, :self.goal_seq_len, :])
         state_x = self.drop(state_embed + position_embeddings[:, self.goal_seq_len:(self.goal_seq_len + t), :])
-        action_x = self.drop(action_embed + position_embeddings[:, 1:, :])
+        action_x = self.drop(action_embed + position_embeddings[:, 1:, :]) if action_embed is not None else None
         proprio_x = self.drop(proprio_states + position_embeddings[:, self.goal_seq_len:(self.goal_seq_len + t), :]) if proprio_states is not None else None
         return goal_x, state_x, action_x, proprio_x
 

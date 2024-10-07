@@ -100,7 +100,7 @@ class Attention(nn.Module):
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(block_size, block_size))
-                                        .view(1, 1, block_size, block_size))
+                                        .view(1, 1, block_size, block_size), persistent=False)
         self.use_rot_embed = use_rot_embed
         if self.use_rot_embed:
         # Update (12/2022): Rotary embedding has since been hugely successful, widely adopted in many large language models, including the largest in the world, PaLM. 
@@ -114,7 +114,7 @@ class Attention(nn.Module):
                 use_xpos = rotary_xpos, 
                 xpos_scale_base = rotary_xpos_scale_base, 
                 interpolate_factor = rotary_interpolation_factor, 
-            ) 
+            )
 
     def forward(self, x, context=None, custom_attn_mask=None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -123,9 +123,9 @@ class Attention(nn.Module):
         # if the context is not None we do cross-attention othberwise self=attention
         # cross attention computes the query from x and the keys and values are from the context
         if context is not None:
-            k = self.key(context).view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+            k = self.key(context).view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
             q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-            v = self.value(context).view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+            v = self.value(context).view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
         else:
             k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
             q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)

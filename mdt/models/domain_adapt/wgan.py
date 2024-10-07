@@ -4,6 +4,7 @@ from torch.autograd import Variable
 import time as t
 import os
 from torchvision import utils
+import torch.nn.functional as F
 
 
 class Discriminator(torch.nn.Module):
@@ -77,20 +78,62 @@ class WGAN_CP(torch.nn.Module):
         return loss
 
 
+# StyleGAN2
+def leaky_relu(p=0.2):
+    return nn.LeakyReLU(p, inplace=True)
+
+class EqualLinear(nn.Module):
+    def __init__(self, in_dim, out_dim, lr_mul = 1., bias = True):
+        super(EqualLinear, self).__init__()
+        self.weight = nn.Parameter(torch.randn(out_dim, in_dim))
+        if bias:
+            self.bias = nn.Parameter(torch.zeros(out_dim))
+
+        self.lr_mul = lr_mul
+
+    def forward(self, input):
+        return F.linear(input, self.weight * self.lr_mul, bias=self.bias * self.lr_mul)
+
+class StyleVectorizer(nn.Module):
+    def __init__(self, in_dim, out_dim, depth, lr_mul = 0.1):
+        super(StyleVectorizer, self).__init__()
+
+        layers = [
+            torch.nn.LayerNorm(in_dim, eps=1e-6),
+            nn.Linear(in_dim, out_dim),  # reduce dim
+            leaky_relu(),
+        ]
+        for i in range(depth):
+            layers.extend([EqualLinear(out_dim, out_dim, lr_mul), leaky_relu()])
+
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        # x = F.normalize(x, dim=1)
+        return self.net(x)
+#*********************************************
+
+
 from torch.autograd import grad
 class WGAN_GP(torch.nn.Module):
     def __init__(self, in_dim: int = 3 * 512):
         super(WGAN_GP, self).__init__()
+        # self.discriminator = nn.Sequential(
+        #     nn.Linear(in_dim, in_dim),
+        #     nn.GELU(),
+        #     nn.Linear(in_dim, in_dim // 2),
+        #     nn.GELU(),
+        #     nn.Linear(in_dim // 2, 1),
+        # )
+        reduce_scale = 1
         self.discriminator = nn.Sequential(
-            nn.Linear(in_dim, in_dim),
-            nn.GELU(),
-            nn.Linear(in_dim, in_dim // 2),
-            nn.GELU(),
-            nn.Linear(in_dim // 2, 1),
+            StyleVectorizer(in_dim, in_dim // reduce_scale, depth=1, lr_mul=5),
+            nn.Linear(in_dim // reduce_scale, 1),
         )
-        self.gamma = 1
+        self.gamma = 10
         self.wd_clf = 1
 
+        self.cache_wdist = 0.
         self.cache_gp = 0.
 
     def forward(self, target_feat, source_feat=None, is_discriminator_batch: bool = True, gt_labels=None,):
@@ -110,16 +153,16 @@ class WGAN_GP(torch.nn.Module):
             self.cache_gp = gp = self.gradient_penalty(self.discriminator, source_feat, target_feat, device)
             d_source = self.discriminator(source_feat)
             d_target = self.discriminator(target_feat)
-            wasserstein_distance = d_source.mean() - d_target.mean()
+            self.cache_wdist = wasserstein_distance = d_source.mean() - d_target.mean()
             critic_cost = -wasserstein_distance + self.gamma * gp
             loss = critic_cost
         else:
             d_target = self.discriminator(target_feat)  # large:real
-            wasserstein_distance = -d_target.mean()
-            loss = self.wd_clf * wasserstein_distance
+            d_target_neg_logit = -d_target.mean()
+            loss = self.wd_clf * d_target_neg_logit
         return {
             'loss': loss,
-            'w_dist': wasserstein_distance,
+            'w_dist': self.cache_wdist,
             'gp': self.cache_gp,
         }
 

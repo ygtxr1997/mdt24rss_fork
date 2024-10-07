@@ -2,7 +2,7 @@
 defaults:
   - callbacks: calvin
   - datamodule: calvin_da
-  - model: mdtv_da_enc # mdt_agent, mdtv_agent, mdtv_da_enc, mdtv_da_enc_initial
+  - model: mdt_da_enc # mdt_agent, mdtv_agent, mdtv_da_enc, mdtv_da_enc_initial
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
@@ -22,7 +22,7 @@ future_range: 29
 seed: 242
 device: 'cuda'
 batch_size: 128  # ori:128
-devices: 4
+devices: 1
 goal_window_size: 1
 act_dim: 7
 obs_dim: 384
