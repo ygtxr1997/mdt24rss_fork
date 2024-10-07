@@ -90,6 +90,7 @@ class MDTTransformer(nn.Module):
         self.embed_dim = embed_dim
         self.latent_encoder_emb = None
         self.cache_action_emb = None
+        self.cache_action_output = None
 
         if use_mlp_goal:
             self.goal_emb = nn.Sequential(
@@ -248,10 +249,10 @@ class MDTTransformer(nn.Module):
             x = self.decoder(action_x, emb_t, context)
         else:
             x = self.decoder(action_x, context)
-
         self.cache_action_emb = x
 
         pred_actions = self.action_pred(x)
+        self.cache_action_output = pred_actions
         return pred_actions
     
     def mask_cond(self, cond, force_mask=False):

@@ -2,4 +2,4 @@
 _target_: mdt.models.domain_adapt.wgan.WGAN_GP
 _recursive_: false
 
-in_dim: 5120  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512
+in_dim: 1024  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512

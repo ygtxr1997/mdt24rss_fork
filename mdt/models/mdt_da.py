@@ -142,8 +142,14 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.cache_wdist = 0.
         self.cache_da_g_loss = 0.
         # For visualization
+        self.cache_s_enc = []
+        self.cache_t_enc = []
         self.cache_s_emb = []
         self.cache_t_emb = []
+        self.cache_s_output = []
+        self.cache_t_output = []
+        self.cache_s_action_gt = []
+        self.cache_t_action_gt = []
 
     def load_pretrained_parameters(self, ckpt_path):
         """
@@ -199,7 +205,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         g_optim_groups.extend([
             {"params": self.static_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.gripper_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            {"params": self.model.inner_model.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            # {"params": self.model.inner_model.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
         ])
         # g_optim_groups.extend([
         #     {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
@@ -212,7 +218,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.da_loss, True)
         self.set_requires_grad(self.static_resnet, True)
         self.set_requires_grad(self.gripper_resnet, True)
-        self.set_requires_grad(self.model.inner_model, True)
+        self.set_requires_grad(self.model.inner_model, False)
 
         # g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
         #                                 betas=self.optimizer_config.betas)
@@ -339,6 +345,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         t_latent_encoder_emb_dict = {}
         s_latent_action_emb_dict = {}
         t_latent_action_emb_dict = {}
+        s_feat_dict = {}
+        t_feat_dict = {}
+        s_action_gt_dict = {}
+        t_action_gt_dict = {}
         rand_noise = None
         for self.modality_scope, dataset_batch in batch.items():
             # if 'lang' in self.modality_scope:  # skip:'lang_source', 'lang_target'
@@ -361,8 +371,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                     rand_noise,  # no need to calculate loss
                     is_target=False,
                 )  # will call enc_only_forward() and dec_only_forward()
-                latent_encoder_emb = self.model.inner_model.latent_encoder_emb
-                latent_action_emb = self.model.inner_model.cache_action_emb
+                latent_encoder_emb = self.source_model.inner_model.latent_encoder_emb
+                latent_action_emb = self.source_model.inner_model.cache_action_emb
+                action_output = self.source_model.inner_model.cache_action_output
                 # self.source_model.inner_model.enc_only_forward(
                 #     s_perceptual_emb,
                 #     actions=None,
@@ -376,6 +387,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                     s_perceptual_emb['static'], s_perceptual_emb['gripper']
                 ], dim=-1)  # (bs,1,1024)
                 s_latent_action_emb_dict[self.modality_scope[:-len('_source')]] = latent_action_emb
+                s_feat_dict[self.modality_scope[:-len('_source')]] = action_output
+                s_action_gt_dict[self.modality_scope[:-len('_source')]] = dataset_batch["actions"]
 
             elif 'target' in self.modality_scope:
                 t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
@@ -391,6 +404,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 )
                 latent_encoder_emb = self.model.inner_model.latent_encoder_emb
                 latent_action_emb = self.model.inner_model.cache_action_emb
+                action_output = self.model.inner_model.cache_action_output
                 # self.model.inner_model.enc_only_forward(
                 #     t_perceptual_emb,
                 #     actions=None,
@@ -398,6 +412,16 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 #     sigma=sigmas,
                 # )  # encoder doesn't use actions
                 # latent_encoder_emb = self.model.inner_model.latent_encoder_emb
+
+                # Compute diffusion loss for DEBUG (DO NOT use in method!)
+                diff_loss, sigmas, noise = self.diffusion_loss(
+                    t_perceptual_emb,
+                    latent_goal,
+                    dataset_batch['actions'],
+                    is_target=True,
+                    is_da=False,
+                )
+                action_loss += diff_loss
 
                 # # Compute the masked generative foresight loss (only for target)
                 # if not isinstance(self.gen_img, NoEncoder):
@@ -428,6 +452,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                     t_perceptual_emb['static'], t_perceptual_emb['gripper']
                 ], dim=-1)  # (bs,1,1024)
                 t_latent_action_emb_dict[self.modality_scope[:-len('_target')]] = latent_action_emb  # (bs,10,512)
+                t_feat_dict[self.modality_scope[:-len('_target')]] = action_output
+                t_action_gt_dict[self.modality_scope[:-len('_target')]] = dataset_batch["actions"]
 
             else:
                 raise KeyError(f'[MDTDomainAdaptVisualEncoder] batch key:{self.modality_scope} not supported')
@@ -449,22 +475,57 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         # Domain Adaptation Loss
         if is_discriminator_batch:
             # update D
-            # t_feat_for_da = torch.cat([v for v in t_latent_encoder_emb_dict.values()], dim=0)
-            # s_feat_for_da = torch.cat([v for v in s_latent_encoder_emb_dict.values()], dim=0)
-            t_feat_for_da = torch.cat([v for v in t_latent_action_emb_dict.values()], dim=0)
-            s_feat_for_da = torch.cat([v for v in s_latent_action_emb_dict.values()], dim=0)
+            t_feat_for_da = torch.cat([v for v in t_latent_encoder_emb_dict.values()], dim=0)
+            s_feat_for_da = torch.cat([v for v in s_latent_encoder_emb_dict.values()], dim=0)
+            # t_feat_for_da = torch.cat([v for v in t_latent_action_emb_dict.values()], dim=0)
+            # s_feat_for_da = torch.cat([v for v in s_latent_action_emb_dict.values()], dim=0)
 
-            t_keys = list(t_latent_action_emb_dict.keys())
-            s_keys = list(s_latent_action_emb_dict.keys())
-            bs = t_latent_action_emb_dict[t_keys[0]].shape[0]
-            print(t_keys, s_keys, t_latent_action_emb_dict[t_keys[0]].shape)
-            self.cache_t_emb.append(t_latent_action_emb_dict[t_keys[0]].detach().cpu().reshape(bs, -1).numpy())
-            self.cache_s_emb.append(s_latent_action_emb_dict[s_keys[0]].detach().cpu().reshape(bs, -1).numpy())
+            if len(self.cache_t_emb) < 20 and len(self.cache_s_emb) < 20:
+                t_keys = list(t_latent_action_emb_dict.keys())
+                s_keys = list(s_latent_action_emb_dict.keys())
+                t_key = t_keys[-1]
+                bs = t_latent_action_emb_dict[t_key].shape[0]
+                last_dim = t_latent_action_emb_dict[t_key].shape[-1]
+                # print(t_keys, s_keys, t_latent_action_emb_dict[t_key].shape)
+                self.cache_t_enc.append(t_latent_encoder_emb_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+                self.cache_s_enc.append(s_latent_encoder_emb_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+                self.cache_t_emb.append(t_latent_action_emb_dict[t_key].detach().cpu().reshape(bs, -1).numpy())
+                self.cache_s_emb.append(s_latent_action_emb_dict[t_key].detach().cpu().reshape(bs, -1).numpy())
+                # self.cache_t_emb.append(t_latent_action_emb_dict[t_key].detach().cpu().reshape(-1, last_dim).numpy())
+                # self.cache_s_emb.append(s_latent_action_emb_dict[t_key].detach().cpu().reshape(-1, last_dim).numpy())
+                self.cache_t_output.append(t_feat_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+                self.cache_s_output.append(s_feat_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+                self.cache_t_action_gt.append(t_action_gt_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+                self.cache_s_action_gt.append(s_action_gt_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+
             from mdt.datasets.utils.debug_utils import TSNEHelper
-            if len(self.cache_t_emb) == 10 and len(self.cache_s_emb) == 10:
+            if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 100 == 0 and
+                    len(self.cache_t_emb) >= 20 and len(self.cache_s_emb) >= 20):
+                epoch_idx = self.current_epoch
+                tsne_inputs = np.concatenate(self.cache_t_enc + self.cache_s_enc, axis=0)
+                helper = TSNEHelper(tsne_inputs)
+                helper.plot_tsne(f'{epoch_idx:02d}_{batch_idx:08d}_tmp_visual_enc')
+
                 tsne_inputs = np.concatenate(self.cache_t_emb + self.cache_s_emb, axis=0)
                 helper = TSNEHelper(tsne_inputs)
-                helper.plot_tsne()
+                helper.plot_tsne(f'{epoch_idx:02d}_{batch_idx:08d}_tmp_action_embedding')
+
+                tsne_inputs = np.concatenate(self.cache_t_output + self.cache_s_output, axis=0)
+                helper = TSNEHelper(tsne_inputs)
+                helper.plot_tsne(f'{epoch_idx:02d}_{batch_idx:08d}_tmp_action_output')
+
+                tsne_inputs = np.concatenate(self.cache_t_action_gt + self.cache_s_action_gt, axis=0)
+                helper = TSNEHelper(tsne_inputs)
+                helper.plot_tsne(f'{epoch_idx:02d}_{batch_idx:08d}_tmp_action_gt')
+
+                self.cache_t_enc = []
+                self.cache_s_enc = []
+                self.cache_t_action_gt = []
+                self.cache_s_action_gt = []
+                self.cache_t_output = []
+                self.cache_s_output = []
+                self.cache_t_emb = []
+                self.cache_s_emb = []
 
             da_loss_dict = self.da_loss.forward(
                 t_feat_for_da.detach(),  # avoid grad of G_target
@@ -478,8 +539,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
 
         else:
             # update G
-            # t_feat_for_da = torch.cat([v for v in t_latent_encoder_emb_dict.values()], dim=0)
-            t_feat_for_da = torch.cat([v for v in t_latent_action_emb_dict.values()], dim=0)
+            t_feat_for_da = torch.cat([v for v in t_latent_encoder_emb_dict.values()], dim=0)
+            # t_feat_for_da = torch.cat([v for v in t_latent_action_emb_dict.values()], dim=0)
             s_feat_for_da = t_feat_for_da  # not used
             da_loss_dict = self.da_loss.forward(
                 t_feat_for_da,           # update G_target
@@ -497,7 +558,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         da_d_loss = da_d_loss / 1  # choose 1 from 2
         da_g_loss = da_g_loss / 1  # choose 1 from 2
         da_loss = da_d_loss if is_discriminator_batch else da_g_loss
-        total_loss = da_loss + img_gen_loss + cont_loss
+        # da_loss = 0.  # DEBUG close da_loss
+        total_loss = da_loss + img_gen_loss + cont_loss + action_loss
 
         # Log the metrics
         # self.on_before_zero_grad()
@@ -505,7 +567,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                                    w_dist, gp,
                                    total_bs)
         self.manual_backward(total_loss)
-        # opt.step()
+        opt.step()
         # sch.step()
         return total_loss
 
@@ -709,7 +771,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         """
         Log the training metrics.
         """
-        self.log("train/action_loss", action_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
+        self.log("train/action_loss", action_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
         self.log("train/total_loss", total_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
         self.log("train/cont_loss", cont_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
         self.log("train/img_gen_loss", img_gen_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
@@ -736,6 +798,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             latent_goal: torch.Tensor,
             actions: torch.Tensor,  # gt
             is_target: bool = True,
+            is_da: bool = True,
     ) -> torch.Tensor:
         """
         Computes the score matching loss given the perceptual embedding, latent goal, and desired actions.
@@ -747,14 +810,14 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             self.source_model.eval()
             sigmas = self.make_sample_density()(shape=(len(actions),), device=self.device).to(self.device)
             noise = torch.randn_like(actions).to(self.device)
-            loss, _ = self.source_model.loss(perceptual_emb, actions, latent_goal, noise, sigmas, is_da=True)
-            loss = 0.
+            loss, _ = self.source_model.loss(perceptual_emb, actions, latent_goal, noise, sigmas, is_da=is_da)
+            # loss = 0.
         else:
             self.model.train()
             sigmas = self.make_sample_density()(shape=(len(actions),), device=self.device).to(self.device)
             noise = torch.randn_like(actions).to(self.device)
-            loss, _ = self.model.loss(perceptual_emb, actions, latent_goal, noise, sigmas, is_da=True)
-            loss = 0.
+            loss, _ = self.model.loss(perceptual_emb, actions, latent_goal, noise, sigmas, is_da=is_da)
+            # loss = 0.
         return loss, sigmas, noise
 
     def denoise_actions(  # type: ignore

@@ -127,7 +127,7 @@ class WGAN_GP(torch.nn.Module):
         # )
         reduce_scale = 1
         self.discriminator = nn.Sequential(
-            StyleVectorizer(in_dim, in_dim // reduce_scale, depth=1, lr_mul=5),
+            StyleVectorizer(in_dim, in_dim // reduce_scale, depth=1, lr_mul=1),
             nn.Linear(in_dim // reduce_scale, 1),
         )
         self.gamma = 10
