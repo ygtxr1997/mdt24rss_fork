@@ -130,7 +130,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         if ckpt_path is not None:
             self.load_pretrained_parameters(ckpt_path)
         else:
-            raise ValueError('[MDTDomainAdaptVisualEncoder] ckpt_path must be provided!')
+            pass
+            # raise ValueError('[MDTDomainAdaptVisualEncoder] ckpt_path must be provided!')
 
         # Create model copies for domain adaptation AFTER loading pretrained weights
         self.source_static_resnet = copy.deepcopy(self.static_resnet)
@@ -199,18 +200,19 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.source_static_resnet, False)
         self.set_requires_grad(self.source_gripper_resnet, False)
         self.set_requires_grad(self.source_model, False)
-        self.set_requires_grad(self.gen_img, False)
-        self.set_requires_grad(self.clip_proj, False)
-        self.logit_scale.requires_grad = False
+        self.set_requires_grad(self.gen_img, True)
+        # self.set_requires_grad(self.clip_proj, False)
+        # self.logit_scale.requires_grad = False
         g_optim_groups.extend([
             {"params": self.static_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.gripper_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            # {"params": self.model.inner_model.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            {"params": self.model.inner_model.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
         ])
-        # g_optim_groups.extend([
-        #     {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
-        #     {"params": self.logit_scale, "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
-        # ])
+        g_optim_groups.extend([
+            {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
+            {"params": self.logit_scale, "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
+        ])
 
         d_optim_groups.extend([
             {"params": self.da_loss.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay}
@@ -218,7 +220,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.da_loss, True)
         self.set_requires_grad(self.static_resnet, True)
         self.set_requires_grad(self.gripper_resnet, True)
-        self.set_requires_grad(self.model.inner_model, False)
+        self.set_requires_grad(self.model.inner_model, True)
 
         # g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
         #                                 betas=self.optimizer_config.betas)
@@ -308,8 +310,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         if is_discriminator_batch:
             # update D
             d_opt.zero_grad()
-            self.set_requires_grad(self.static_resnet, False)
-            self.set_requires_grad(self.gripper_resnet, False)
+            # self.set_requires_grad(self.static_resnet, False)
+            # self.set_requires_grad(self.gripper_resnet, False)
             # self.set_requires_grad(self.model.inner_model, False)
             # self.set_requires_grad(self.gen_img, False)
             opt = d_opt
@@ -423,29 +425,29 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 )
                 action_loss += diff_loss
 
-                # # Compute the masked generative foresight loss (only for target)
-                # if not isinstance(self.gen_img, NoEncoder):
-                #     rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
-                #     rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
-                #     img_gen_frame_diff = dataset_batch[
-                #         'future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
-                #     # combine both goal images
-                #     rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
-                #     img_gen_embed = latent_encoder_emb
-                #     img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
-                #                                                   img_gen_frame_diff=img_gen_frame_diff)
-                #     img_gen_loss += img_gen_loss_part * self.masked_beta
+                # Compute the masked generative foresight loss (only for target)
+                if not isinstance(self.gen_img, NoEncoder):
+                    rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
+                    rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
+                    img_gen_frame_diff = dataset_batch[
+                        'future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
+                    # combine both goal images
+                    rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
+                    img_gen_embed = latent_encoder_emb
+                    img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
+                                                                  img_gen_frame_diff=img_gen_frame_diff)
+                    img_gen_loss += img_gen_loss_part * self.masked_beta
 
-                # # Compute the Contrastive Latent Alignment Loss (only for target)
-                # cont_loss_part = self.compute_contrastive_loss(
-                #     t_perceptual_emb,
-                #     latent_goal,
-                #     image_latent_goal,
-                #     dataset_batch,
-                #     sigmas,
-                #     noise
-                # )
-                # cont_loss += self.cont_alpha * cont_loss_part
+                # Compute the Contrastive Latent Alignment Loss (only for target)
+                cont_loss_part = self.compute_contrastive_loss(
+                    t_perceptual_emb,
+                    latent_goal,
+                    image_latent_goal,
+                    dataset_batch,
+                    sigmas,
+                    noise
+                )
+                cont_loss += self.cont_alpha * cont_loss_part
 
                 # t_latent_encoder_emb_dict[self.modality_scope[:-len('_target')]] = latent_encoder_emb
                 t_latent_encoder_emb_dict[self.modality_scope[:-len('_target')]] = torch.cat([
@@ -499,24 +501,24 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 self.cache_s_action_gt.append(s_action_gt_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
 
             from mdt.datasets.utils.debug_utils import TSNEHelper
-            if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 100 == 0 and
+            if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 400 == 0 and
                     len(self.cache_t_emb) >= 20 and len(self.cache_s_emb) >= 20):
                 epoch_idx = self.current_epoch
                 tsne_inputs = np.concatenate(self.cache_t_enc + self.cache_s_enc, axis=0)
                 helper = TSNEHelper(tsne_inputs)
-                helper.plot_tsne(f'{epoch_idx:02d}_{batch_idx:08d}_tmp_visual_enc')
+                helper.plot_tsne(f'visual_enc_{epoch_idx:02d}_{batch_idx:05d}')
 
-                tsne_inputs = np.concatenate(self.cache_t_emb + self.cache_s_emb, axis=0)
-                helper = TSNEHelper(tsne_inputs)
-                helper.plot_tsne(f'{epoch_idx:02d}_{batch_idx:08d}_tmp_action_embedding')
+                # tsne_inputs = np.concatenate(self.cache_t_emb + self.cache_s_emb, axis=0)
+                # helper = TSNEHelper(tsne_inputs)
+                # helper.plot_tsne(f'action_embedding_{epoch_idx:02d}_{batch_idx:05d}')
 
                 tsne_inputs = np.concatenate(self.cache_t_output + self.cache_s_output, axis=0)
                 helper = TSNEHelper(tsne_inputs)
-                helper.plot_tsne(f'{epoch_idx:02d}_{batch_idx:08d}_tmp_action_output')
+                helper.plot_tsne(f'action_output_{epoch_idx:02d}_{batch_idx:05d}')
 
-                tsne_inputs = np.concatenate(self.cache_t_action_gt + self.cache_s_action_gt, axis=0)
-                helper = TSNEHelper(tsne_inputs)
-                helper.plot_tsne(f'{epoch_idx:02d}_{batch_idx:08d}_tmp_action_gt')
+                # tsne_inputs = np.concatenate(self.cache_t_action_gt + self.cache_s_action_gt, axis=0)
+                # helper = TSNEHelper(tsne_inputs)
+                # helper.plot_tsne(f'action_gt_{epoch_idx:02d}_{batch_idx:05d}')
 
                 self.cache_t_enc = []
                 self.cache_s_enc = []
@@ -558,7 +560,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         da_d_loss = da_d_loss / 1  # choose 1 from 2
         da_g_loss = da_g_loss / 1  # choose 1 from 2
         da_loss = da_d_loss if is_discriminator_batch else da_g_loss
-        # da_loss = 0.  # DEBUG close da_loss
+        da_loss = da_d_loss = da_g_loss = 0.  # DEBUG close da_loss
         total_loss = da_loss + img_gen_loss + cont_loss + action_loss
 
         # Log the metrics
