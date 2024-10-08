@@ -340,7 +340,7 @@ class MDTVDomainAdapt(pl.LightningModule):
         output = {}
         val_total_act_loss_pp = torch.tensor(0.0).to(self.device)
         for self.modality_scope, dataset_batch in batch.items():
-            if "target" in self.modality_scope:
+            if "source" in self.modality_scope:
                 continue
             # Compute the required embeddings
             perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(dataset_batch)

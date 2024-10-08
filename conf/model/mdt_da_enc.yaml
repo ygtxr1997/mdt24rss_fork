@@ -33,9 +33,9 @@ optimizer:
   transformer_weight_decay: 0.05
   obs_encoder_weight_decay: 0.05
   learning_rate: 1e-4
-  betas: [0.5,0.9]
+  betas: [0.9,0.9]
   da_lr: 1e-4
-  da_betas: [0.5, 0.9]
+  da_betas: [0.9, 0.9]
 
 lr_scheduler:
   lr_scheduler:

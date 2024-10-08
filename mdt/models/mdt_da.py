@@ -220,7 +220,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.da_loss, True)
         self.set_requires_grad(self.static_resnet, True)
         self.set_requires_grad(self.gripper_resnet, True)
-        self.set_requires_grad(self.model.inner_model, True)
+        self.set_requires_grad(self.model, True)
 
         # g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
         #                                 betas=self.optimizer_config.betas)
@@ -303,10 +303,18 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         Returns:
             loss tensor
         """
+        batch_st = {
+            'vis_source': None,
+            'vis_target': batch['vis'],
+            'lang_source': None,
+            'lang_target': batch['lang'],
+        }
+        batch = batch_st
         g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training
         # g_sch, d_sch = self.lr_schedulers()
 
         is_discriminator_batch = (batch_idx % 2) < 1  # true:update discriminator; false:update encoder
+        is_discriminator_batch = False
         if is_discriminator_batch:
             # update D
             d_opt.zero_grad()
@@ -322,7 +330,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             g_opt.zero_grad()
             self.set_requires_grad(self.static_resnet, True)
             self.set_requires_grad(self.gripper_resnet, True)
-            # self.set_requires_grad(self.model.inner_model, True)
+            self.set_requires_grad(self.model.inner_model, True)
             # self.set_requires_grad(self.gen_img, True)
             opt = g_opt
             # sch = g_sch
@@ -355,7 +363,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         for self.modality_scope, dataset_batch in batch.items():
             # if 'lang' in self.modality_scope:  # skip:'lang_source', 'lang_target'
             #     continue
-            rand_noise = torch.randn_like(dataset_batch["actions"]) if rand_noise is None else rand_noise
+            if 'source' in self.modality_scope:
+                continue
+            if dataset_batch is not None:
+                rand_noise = torch.randn_like(dataset_batch["actions"]) if rand_noise is None else rand_noise
 
             if 'source' in self.modality_scope:
                 if not is_discriminator_batch:  # only used for updating discriminator
@@ -592,6 +603,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         output = {}
         val_total_act_loss_pp = torch.tensor(0.0).to(self.device)
         for self.modality_scope, dataset_batch in batch.items():
+            print('Validating', self.modality_scope)
+            if "source" in self.modality_scope:
+                continue
             # Compute the required embeddings
             perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(dataset_batch)
 
@@ -995,6 +1009,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         """
         Method for doing inference with the model.
         """
+        print('[DEBUG] goal:', goal)
         if 'lang' in goal:
             modality = 'lang'
             if self.use_text_not_embedding:

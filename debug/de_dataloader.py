@@ -65,6 +65,55 @@ def print_batch(prefix, x, depth=0):
     else:
         raise TypeError(f'type {type(x)} not supported. x must be torch.Tensor or list or dict')
 
+def cmp_two_tensors(b1, b2):
+    if isinstance(b1, np.ndarray) and isinstance(b2, np.ndarray):
+        b1 = torch.tensor(b1)
+        b2 = torch.tensor(b2)
+    print('Compare two tensors.')
+    print(b1.mean(), b1.max(), b1.min(), b1.dtype)
+    print(b2.mean(), b2.max(), b2.min(), b2.dtype)
+    print('diff:', torch.abs(b1 - b2).sum(), b1.shape, b2.shape)
+
+def cmp_two_dataloaders():
+    with hydra.initialize(config_path="../conf", job_name="test_app"):
+        dataloader_1_config = hydra.compose(config_name="da_d_hk.yaml", overrides=[])
+    dataloader_1 = hydra.utils.instantiate(dataloader_1_config.datamodule)
+    dataloader_1.prepare_data()
+    dataloader_1.setup(stage='train')
+
+    ds1 = dataloader_1.train_datasets['vis_target']
+    # d1 = iter(dataloader_1.test_dataloader())
+
+    with hydra.initialize(config_path="../conf", job_name="test_app"):
+        dataloader_2_config = hydra.compose(config_name="config_d_hk.yaml", overrides=[])
+    dataloader_2 = hydra.utils.instantiate(dataloader_2_config.datamodule)
+    dataloader_2.prepare_data()
+    dataloader_2.setup(stage='train')
+
+    ds2 = dataloader_2.train_datasets['vis']
+    # d2 = iter(dataloader_2.test_dataloader()['vis'])
+    # d2 = iter(dataloader_2.val_dataloader())
+
+    # print_batch('ds1', ds1[0])
+    # print_batch('ds2', ds2[0])
+    for i in range(1):
+        print('vvv' * 10)
+        b1 = ds1[i]['robot_obs']
+        print('***' * 10)
+        b2 = ds2[i]['robot_obs']
+        print('^^^' * 10)
+        cmp_two_tensors(b1, b2)
+    ep_npy1 = ds1.extracted_ep_rel_actions[0]
+    ep_npy2 = ds2.extracted_ep_rel_actions[0]
+    cmp_two_tensors(ep_npy1, ep_npy2)
+    exit()
+
+    b1 = next(d1)['vis_target']['robot_obs']
+    b2 = next(d2)['robot_obs']
+    # b2 = next(d2)['vis']['robot_obs']
+    cmp_two_tensors(b1, b2)
+    exit()
+
 
 @hydra.main(config_path="../conf", config_name="da_d_hk")
 def main(cfg: DictConfig) -> None:
@@ -128,11 +177,15 @@ def main(cfg: DictConfig) -> None:
 
 
 if __name__ == "__main__":
-    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "5,6"
-    print(torch.cuda.is_available())
-    print(torch.cuda.device_count())
-    os.environ["TOKENIZERS_PARALLELISM"] = 'True'
-    os.environ["WANDB__SERVICE_WAIT"] = "300"  # alleviate ServiceStartTimeoutError
-    main()
+    use_ddp_env = False
+    if use_ddp_env:
+        os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        # os.environ["CUDA_VISIBLE_DEVICES"] = "5,6"
+        print(torch.cuda.is_available())
+        print(torch.cuda.device_count())
+        os.environ["TOKENIZERS_PARALLELISM"] = 'True'
+        os.environ["WANDB__SERVICE_WAIT"] = "300"  # alleviate ServiceStartTimeoutError
+        main()
+    else:
+        cmp_two_dataloaders()

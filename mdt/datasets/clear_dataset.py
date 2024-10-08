@@ -170,6 +170,8 @@ class ClearDataset(Dataset):
             self.extracted_ep_rel_actions: np.ndarray = np.load(os.path.join(self.extracted_dir, "ep_rel_actions.npy"))
             logger.info(f"Extracted files loaded from {self.extracted_dir}")
 
+        self.debug_print = False
+
     def __getitem__(self, idx: Union[int, Tuple[int, int]]) -> Dict:
         """
         Get sequence of dataset.
@@ -594,6 +596,11 @@ class ClearDataset(Dataset):
 
             # print(f'[DEBUG] {key}: {episode[key].shape}, {stacked_data.shape}')
         # print(f'[DEBUG] gen:{gen_img_static.shape}, {gen_img_gripper.shape}')
+
+        # if not self.debug_print:
+        #     print(f'[DEBUG] start:{start_idx}, end:{end_idx}')
+        #     print(episode['rgb_static'].mean(), episode['rgb_static'].min(), episode['rgb_static'].max(),)
+        #     self.debug_print = True
 
         if self.with_lang:
             episode["language"] = self.lang_ann[self.lang_lookup[idx]][0]  # TODO check  [0]

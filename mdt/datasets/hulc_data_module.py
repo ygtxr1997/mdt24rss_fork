@@ -151,6 +151,18 @@ class HulcDataModule(pl.LightningDataModule):
             for key, dataset in self.train_datasets.items()
         }
 
+    def test_dataloader(self):  # just for debug
+        return {
+            key: DataLoader(
+                dataset,
+                batch_size=dataset.batch_size,
+                num_workers=dataset.num_workers,
+                pin_memory=True,
+                shuffle=False,
+            )
+            for key, dataset in self.train_datasets.items()
+        }
+
     def val_dataloader(self):
         val_dataloaders = {
             key: DataLoader(

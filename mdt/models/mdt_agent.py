@@ -213,6 +213,10 @@ class MDTAgent(pl.LightningModule):
         Returns:
             loss tensor
         """
+        batch = {
+            'vis': batch['vis_target'],
+            'lang': batch['lang_target'],
+        }
         total_loss, action_loss, cont_loss, id_loss,  img_gen_loss = (
             torch.tensor(0.0).to(self.device),
             torch.tensor(0.0).to(self.device),
@@ -293,6 +297,10 @@ class MDTAgent(pl.LightningModule):
             episode indices.
         """
         output = {}
+        batch = {
+            'vis': batch['vis_target'],
+            'lang': batch['lang_target'],
+        }
         val_total_act_loss_pp = torch.tensor(0.0).to(self.device)
         for self.modality_scope, dataset_batch in batch.items():
             # Compute the required embeddings
