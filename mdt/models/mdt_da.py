@@ -200,14 +200,14 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.source_static_resnet, False)
         self.set_requires_grad(self.source_gripper_resnet, False)
         self.set_requires_grad(self.source_model, False)
-        self.set_requires_grad(self.gen_img, True)
+        self.set_requires_grad(self.gen_img, False)
         # self.set_requires_grad(self.clip_proj, False)
         # self.logit_scale.requires_grad = False
         g_optim_groups.extend([
             {"params": self.static_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.gripper_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            {"params": self.model.inner_model.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            # {"params": self.model.inner_model.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
         ])
         g_optim_groups.extend([
             {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
@@ -303,18 +303,18 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         Returns:
             loss tensor
         """
-        batch_st = {
-            'vis_source': None,
-            'vis_target': batch['vis'],
-            'lang_source': None,
-            'lang_target': batch['lang'],
-        }
-        batch = batch_st
-        g_opt, d_opt = self.optimizers(use_pl_optimizer=False)  # pl_optimizer doesn't support AMP training
+        # batch_st = {
+        #     'vis_source': None,
+        #     'vis_target': batch['vis'],
+        #     'lang_source': None,
+        #     'lang_target': batch['lang'],
+        # }
+        # batch = batch_st
+        g_opt, d_opt = self.optimizers(use_pl_optimizer=True)  # pl_optimizer doesn't support AMP training
         # g_sch, d_sch = self.lr_schedulers()
 
         is_discriminator_batch = (batch_idx % 2) < 1  # true:update discriminator; false:update encoder
-        is_discriminator_batch = False
+        # is_discriminator_batch = False
         if is_discriminator_batch:
             # update D
             d_opt.zero_grad()
@@ -330,7 +330,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             g_opt.zero_grad()
             self.set_requires_grad(self.static_resnet, True)
             self.set_requires_grad(self.gripper_resnet, True)
-            self.set_requires_grad(self.model.inner_model, True)
+            # self.set_requires_grad(self.model.inner_model, True)
             # self.set_requires_grad(self.gen_img, True)
             opt = g_opt
             # sch = g_sch
@@ -363,8 +363,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         for self.modality_scope, dataset_batch in batch.items():
             # if 'lang' in self.modality_scope:  # skip:'lang_source', 'lang_target'
             #     continue
-            if 'source' in self.modality_scope:
-                continue
+            # if 'source' in self.modality_scope:
+            #     continue
             if dataset_batch is not None:
                 rand_noise = torch.randn_like(dataset_batch["actions"]) if rand_noise is None else rand_noise
 
@@ -426,39 +426,39 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 # )  # encoder doesn't use actions
                 # latent_encoder_emb = self.model.inner_model.latent_encoder_emb
 
-                # Compute diffusion loss for DEBUG (DO NOT use in method!)
-                diff_loss, sigmas, noise = self.diffusion_loss(
-                    t_perceptual_emb,
-                    latent_goal,
-                    dataset_batch['actions'],
-                    is_target=True,
-                    is_da=False,
-                )
-                action_loss += diff_loss
+                # # Compute diffusion loss for DEBUG (DO NOT use in method!)
+                # diff_loss, sigmas, noise = self.diffusion_loss(
+                #     t_perceptual_emb,
+                #     latent_goal,
+                #     dataset_batch['actions'],
+                #     is_target=True,
+                #     is_da=False,
+                # )
+                # action_loss += diff_loss
 
-                # Compute the masked generative foresight loss (only for target)
-                if not isinstance(self.gen_img, NoEncoder):
-                    rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
-                    rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
-                    img_gen_frame_diff = dataset_batch[
-                        'future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
-                    # combine both goal images
-                    rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
-                    img_gen_embed = latent_encoder_emb
-                    img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
-                                                                  img_gen_frame_diff=img_gen_frame_diff)
-                    img_gen_loss += img_gen_loss_part * self.masked_beta
+                # # Compute the masked generative foresight loss (only for target)
+                # if not isinstance(self.gen_img, NoEncoder):
+                #     rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
+                #     rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
+                #     img_gen_frame_diff = dataset_batch[
+                #         'future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
+                #     # combine both goal images
+                #     rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
+                #     img_gen_embed = latent_encoder_emb
+                #     img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
+                #                                                   img_gen_frame_diff=img_gen_frame_diff)
+                #     img_gen_loss += img_gen_loss_part * self.masked_beta
 
-                # Compute the Contrastive Latent Alignment Loss (only for target)
-                cont_loss_part = self.compute_contrastive_loss(
-                    t_perceptual_emb,
-                    latent_goal,
-                    image_latent_goal,
-                    dataset_batch,
-                    sigmas,
-                    noise
-                )
-                cont_loss += self.cont_alpha * cont_loss_part
+                # # Compute the Contrastive Latent Alignment Loss (only for target)
+                # cont_loss_part = self.compute_contrastive_loss(
+                #     t_perceptual_emb,
+                #     latent_goal,
+                #     image_latent_goal,
+                #     dataset_batch,
+                #     sigmas,
+                #     noise
+                # )
+                # cont_loss += self.cont_alpha * cont_loss_part
 
                 # t_latent_encoder_emb_dict[self.modality_scope[:-len('_target')]] = latent_encoder_emb
                 t_latent_encoder_emb_dict[self.modality_scope[:-len('_target')]] = torch.cat([
@@ -571,7 +571,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         da_d_loss = da_d_loss / 1  # choose 1 from 2
         da_g_loss = da_g_loss / 1  # choose 1 from 2
         da_loss = da_d_loss if is_discriminator_batch else da_g_loss
-        da_loss = da_d_loss = da_g_loss = 0.  # DEBUG close da_loss
+        # da_loss = da_d_loss = da_g_loss = 0.  # DEBUG close da_loss
         total_loss = da_loss + img_gen_loss + cont_loss + action_loss
 
         # Log the metrics

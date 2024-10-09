@@ -74,7 +74,7 @@ class MDTAgent(pl.LightningModule):
             manually_backward: bool = False,
     ):
         super(MDTAgent, self).__init__()
-        self.automatic_optimization = manually_backward  # manually backward
+        self.automatic_optimization = not manually_backward  # manually backward
         self.latent_dim = latent_dim
         img_gen['context_dim'] = self.latent_dim
         self.static_resnet = BesoResNetEncoder(self.latent_dim)
@@ -225,7 +225,8 @@ class MDTAgent(pl.LightningModule):
             'vis': batch['vis_target'],
             'lang': batch['lang_target'],
         }
-        g_opt = self.optimizers(use_pl_optimizer=False)
+        # g_opt = self.optimizers(use_pl_optimizer=False)
+        g_opt = self.optimizers(use_pl_optimizer=False)  # BUG: If False, val_acc% is zero
 
         opt = g_opt
 
