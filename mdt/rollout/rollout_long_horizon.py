@@ -8,6 +8,7 @@ from typing import Any
 import hydra
 import numpy as np
 from pytorch_lightning import Callback, LightningModule, Trainer
+from pytorch_lightning.trainer.states import TrainerStatus, RunningStage
 from termcolor import colored
 import torch
 import torch.distributed as dist
@@ -171,6 +172,7 @@ class RolloutLongHorizon(Callback):
                 self.eval_sequences = get_sequences(self.num_sequences)
 
     def on_validation_epoch_end(self, trainer: Trainer, pl_module: LightningModule, dataloader_idx: int =0, *args) -> None:  # type: ignore
+        print(trainer.state.stage == RunningStage.SANITY_CHECKING, trainer.state)
         if pl_module.current_epoch == 0 and self.skip_epochs > 0:
             for i in range(1, 6):
                 pl_module.log(f"eval_lh/sr_chain_{i}", torch.tensor(0.0), on_step=False, sync_dist=True)

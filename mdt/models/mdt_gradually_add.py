@@ -70,8 +70,11 @@ class MDTAgent(pl.LightningModule):
             use_text_not_embedding: bool = False,
             ckpt_path=None,
             seed: int = 42,
+            # DA used
+            manually_backward: bool = False,
     ):
         super(MDTAgent, self).__init__()
+        self.automatic_optimization = manually_backward  # manually backward
         self.latent_dim = latent_dim
         img_gen['context_dim'] = self.latent_dim
         self.static_resnet = BesoResNetEncoder(self.latent_dim)
@@ -222,6 +225,10 @@ class MDTAgent(pl.LightningModule):
             'vis': batch['vis_target'],
             'lang': batch['lang_target'],
         }
+        g_opt = self.optimizers(use_pl_optimizer=False)
+
+        opt = g_opt
+
         total_loss, action_loss, cont_loss, id_loss, img_gen_loss = (
             torch.tensor(0.0).to(self.device),
             torch.tensor(0.0).to(self.device),
@@ -282,8 +289,15 @@ class MDTAgent(pl.LightningModule):
         img_gen_loss = img_gen_loss / batch_len
 
         # Log the metrics
-        # self.on_before_zero_grad()
+        if not self.automatic_optimization:
+            self.on_before_zero_grad()
         self._log_training_metrics(action_loss, total_loss, cont_loss, img_gen_loss, total_bs)
+
+        if not self.automatic_optimization:
+            opt.zero_grad()
+            self.manual_backward(total_loss)
+            opt.step()
+
         return total_loss
 
     @torch.no_grad()
