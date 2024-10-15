@@ -117,6 +117,7 @@ class RolloutLongHorizon(Callback):
         empty_cache,
         val_annotations,
         debug,
+        val_after_sanity,
     ):
         self.env = None  # type: Any
         self.env_cfg = env_cfg
@@ -137,6 +138,7 @@ class RolloutLongHorizon(Callback):
         self.eval_sequences = None
         self.val_annotations = val_annotations
         self.debug = debug
+        self.val_after_sanity = val_after_sanity
 
     def on_validation_start(self, trainer: Trainer, pl_module: LightningModule,  dataloader_idx: int =0) -> None:
         """Called when the validation loop begins."""
@@ -172,7 +174,7 @@ class RolloutLongHorizon(Callback):
                 self.eval_sequences = get_sequences(self.num_sequences)
 
     def on_validation_epoch_end(self, trainer: Trainer, pl_module: LightningModule, dataloader_idx: int =0, *args) -> None:  # type: ignore
-        if trainer.state.stage == RunningStage.SANITY_CHECKING:
+        if not self.val_after_sanity and trainer.state.stage == RunningStage.SANITY_CHECKING:
             return
         if pl_module.current_epoch == 0 and self.skip_epochs > 0:
             for i in range(1, 6):
@@ -212,6 +214,9 @@ class RolloutLongHorizon(Callback):
             results.append(result)
             if record:
                 self.rollout_video.write_to_tmp()
+            if i > 0 and (int(len(self.eval_sequences)) / i) in (10, 2.5, 1.25):
+                avg_seq_len = np.mean(results)
+                print(f"[Rank={local_rank}]Average successful sequence length@Step={i}: {avg_seq_len:.3f} \n")
         return results
 
     def evaluate_sequence(self, model, initial_state, eval_sequence, record, i):

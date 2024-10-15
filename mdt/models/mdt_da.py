@@ -137,8 +137,13 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.source_static_resnet = copy.deepcopy(self.static_resnet)
         self.source_gripper_resnet = copy.deepcopy(self.gripper_resnet)
         self.source_model = copy.deepcopy(self.model)
+        self.placeholder_param = torch.nn.Parameter(torch.ones([1]))
         # For domain adaptation
-        self.da_loss = hydra.utils.instantiate(domain_adapt).to(self.device)
+        self.use_da_act: bool = domain_adapt.use_da_act
+        self.da_loss = hydra.utils.instantiate(domain_adapt.visual_da).to(self.device)
+        self.da_2_loss = hydra.utils.instantiate(domain_adapt.visual_da).to(self.device)
+        if self.use_da_act:
+            self.da_act_loss = hydra.utils.instantiate(domain_adapt.action_da).to(self.device)
         self.cache_da_d_loss = 0.
         self.cache_wdist = 0.
         self.cache_da_g_loss = 0.
@@ -194,33 +199,56 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         """
         # Configuration for models using transformer weight decay
         g_optim_groups = []
+        g_act_optim_groups = []
         d_optim_groups = []
 
         self.set_requires_grad(self.visual_goal, False)
         self.set_requires_grad(self.source_static_resnet, False)
         self.set_requires_grad(self.source_gripper_resnet, False)
         self.set_requires_grad(self.source_model, False)
+
         self.set_requires_grad(self.gen_img, False)
         # self.set_requires_grad(self.clip_proj, False)
         # self.logit_scale.requires_grad = False
+
+        self.set_requires_grad(self.model, False)
+        if self.use_da_act:
+            self.set_requires_grad(self.model, True)
+            self.model.inner_model.freeze_backbone()
+            g_act_optim_groups.extend([
+                {"params": self.model.inner_model.trainable_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+                # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            ])
+        else:
+            g_act_optim_groups.extend([
+                {"params": self.placeholder_param,"weight_decay": self.optimizer_config.transformer_weight_decay}
+            ])
         g_optim_groups.extend([
-            {"params": self.static_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            {"params": self.gripper_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            # {"params": self.model.inner_model.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-        ])
-        g_optim_groups.extend([
-            {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
-            {"params": self.logit_scale, "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
+            # {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
+            # {"params": self.logit_scale, "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
         ])
 
-        d_optim_groups.extend([
-            {"params": self.da_loss.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay}
-        ])
         self.set_requires_grad(self.da_loss, True)
+        self.set_requires_grad(self.da_2_loss, True)
+        d_optim_groups.extend([
+            {"params": self.da_loss.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            {"params": self.da_2_loss.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+        ])
+        if self.use_da_act:
+            self.set_requires_grad(self.da_act_loss, True)
+            d_optim_groups.extend([
+                {"params": self.da_act_loss.parameters(),
+                 "weight_decay": self.optimizer_config.transformer_weight_decay},
+            ])
+
         self.set_requires_grad(self.static_resnet, True)
         self.set_requires_grad(self.gripper_resnet, True)
-        self.set_requires_grad(self.model, True)
+        self.static_resnet.freeze_backbone()
+        self.gripper_resnet.freeze_backbone()
+        g_optim_groups.extend([
+            {"params": self.static_resnet.trainable_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            {"params": self.gripper_resnet.trainable_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+        ])
 
         # g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
         #                                 betas=self.optimizer_config.betas)
@@ -228,21 +256,29 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         #                                 betas=self.optimizer_config.betas)
         g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
                                         betas=self.optimizer_config.betas)
+        g_act_optimizer = torch.optim.AdamW(g_act_optim_groups, lr=self.optimizer_config.learning_rate,
+                                            betas=self.optimizer_config.betas)
         d_optimizer = torch.optim.AdamW(d_optim_groups, lr=self.optimizer_config.da_lr,
                                         betas=self.optimizer_config.da_betas)
 
         # Optionally initialize the scheduler
         if self.use_lr_scheduler:
-            lr_configs = OmegaConf.create(self.lr_scheduler)
-            g_lr_configs = OmegaConf.create(self.lr_scheduler)
-            # g_lr_configs.lr = g_lr_configs.init_lr = 1e-5
+            da_lr_configs = OmegaConf.create(self.lr_scheduler.da_lr_scheduler)
+            g_lr_configs = OmegaConf.create(self.lr_scheduler.enc_lr_scheduler)
+            g_act_lr_configs = OmegaConf.create(self.lr_scheduler.enc_lr_scheduler)
             g_scheduler = TriStageLRScheduler(g_optimizer, g_lr_configs)
             g_lr_scheduler = {
                 "scheduler": g_scheduler,
                 "interval": 'step',
                 "frequency": 1,
             }
-            d_scheduler = TriStageLRScheduler(d_optimizer, lr_configs)
+            g_act_scheduler = TriStageLRScheduler(g_act_optimizer, g_act_lr_configs)
+            g_act_lr_scheduler = {
+                "scheduler": g_act_scheduler,
+                "interval": 'step',
+                "frequency": 1,
+            }
+            d_scheduler = TriStageLRScheduler(d_optimizer, da_lr_configs)
             d_lr_scheduler = {
                 "scheduler": d_scheduler,
                 "interval": 'step',
@@ -252,12 +288,15 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 {"optimizer": g_optimizer,
                  "lr_scheduler": g_lr_scheduler,
                  },
+                {"optimizer": g_act_optimizer,
+                 "lr_scheduler": g_act_lr_scheduler,
+                },
                 {"optimizer": d_optimizer,
                  "lr_scheduler": d_lr_scheduler,
                  },
             )
         else:
-            return g_optimizer, d_optimizer
+            return g_optimizer, g_act_optimizer, d_optimizer
 
     @staticmethod
     def set_requires_grad(model, requires_grad=True):
@@ -271,12 +310,23 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
     def on_before_zero_grad(self, optimizer=None):
         total_grad_norm = 0.0
         total_param_norm = 0.0
-        for p in self.model.parameters():
+        all_none = True
+        for name, p in self.named_parameters():  # ori:self.model.parameters()
+            if 'da_loss' in name:
+                continue
+            elif 'da_2_loss' in name:
+                continue
+            elif 'da_act_loss' in name:
+                continue
             if p.grad is not None:
                 total_grad_norm += p.grad.norm().item() ** 2
+                all_none = False
             total_param_norm += p.norm().item() ** 2
         total_grad_norm = total_grad_norm ** 0.5
         total_param_norm = total_param_norm ** 0.5
+
+        if all_none:
+            print('[Warning] All grads are None!!!')
 
         self.log("train/grad_norm", total_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
         self.log("train/param_norm", total_param_norm, on_step=True, on_epoch=False, sync_dist=True)
@@ -303,37 +353,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         Returns:
             loss tensor
         """
-        # batch_st = {
-        #     'vis_source': None,
-        #     'vis_target': batch['vis'],
-        #     'lang_source': None,
-        #     'lang_target': batch['lang'],
-        # }
-        # batch = batch_st
-        g_opt, d_opt = self.optimizers(use_pl_optimizer=True)  # pl_optimizer doesn't support AMP training
-        # g_sch, d_sch = self.lr_schedulers()
-
-        is_discriminator_batch = (batch_idx % 2) < 1  # true:update discriminator; false:update encoder
-        # is_discriminator_batch = False
-        if is_discriminator_batch:
-            # update D
-            d_opt.zero_grad()
-            # self.set_requires_grad(self.static_resnet, False)
-            # self.set_requires_grad(self.gripper_resnet, False)
-            # self.set_requires_grad(self.model.inner_model, False)
-            # self.set_requires_grad(self.gen_img, False)
-            opt = d_opt
-            # sch = d_sch
-        else:
-            # update G
-            d_opt.zero_grad()
-            g_opt.zero_grad()
-            self.set_requires_grad(self.static_resnet, True)
-            self.set_requires_grad(self.gripper_resnet, True)
-            # self.set_requires_grad(self.model.inner_model, True)
-            # self.set_requires_grad(self.gen_img, True)
-            opt = g_opt
-            # sch = g_sch
+        g_opt, g_act_opt, d_opt = self.optimizers(use_pl_optimizer=True)  # pl_optimizer doesn't support AMP training
+        g_sch, g_act_sch, d_sch = self.lr_schedulers()
 
         total_loss, action_loss, cont_loss, id_loss, img_gen_loss, da_d_loss, da_g_loss = (
             torch.tensor(0.0).to(self.device),
@@ -344,6 +365,15 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             torch.tensor(0.0).to(self.device),
             torch.tensor(0.0).to(self.device),
         )
+        losses = {
+            'total_loss': total_loss,
+            'action_loss': action_loss,
+            'cont_loss': cont_loss,
+            'img_gen_loss': img_gen_loss,
+            'da_d_loss': da_d_loss,
+            'da_g_loss': da_g_loss,
+            'da_g_act_loss': torch.tensor(0.0).to(self.device),
+        }
         encoders_dict = {}
         batch_size: Dict[str, int] = {}
         s_batch_len = 0
@@ -353,6 +383,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         # t_perceptual_emb = None
         s_latent_encoder_emb_dict = {}
         t_latent_encoder_emb_dict = {}
+        s_latent_gripper_emb_dict = {}
+        t_latent_gripper_emb_dict = {}
         s_latent_action_emb_dict = {}
         t_latent_action_emb_dict = {}
         s_feat_dict = {}
@@ -369,8 +401,6 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 rand_noise = torch.randn_like(dataset_batch["actions"]) if rand_noise is None else rand_noise
 
             if 'source' in self.modality_scope:
-                if not is_discriminator_batch:  # only used for updating discriminator
-                    continue
                 # Compute the required embeddings
                 s_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
                     dataset_batch, is_target=False)
@@ -396,9 +426,12 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 # latent_encoder_emb = self.source_model.inner_model.latent_encoder_emb
 
                 # s_latent_encoder_emb_dict[self.modality_scope[:-len('_source')]] = latent_encoder_emb
-                s_latent_encoder_emb_dict[self.modality_scope[:-len('_source')]] = torch.cat([
-                    s_perceptual_emb['static'], s_perceptual_emb['gripper']
-                ], dim=-1)  # (bs,1,1024)
+                # s_latent_encoder_emb_dict[self.modality_scope[:-len('_source')]] = torch.cat([
+                #     s_perceptual_emb['static'], s_perceptual_emb['gripper']
+                # ], dim=-1)  # (bs,1,1024)
+                s_latent_encoder_emb_dict[self.modality_scope[:-len('_source')]] = s_perceptual_emb[
+                    'static']  # (bs,1,512)
+                s_latent_gripper_emb_dict[self.modality_scope[:-len('_source')]] = s_perceptual_emb['gripper']
                 s_latent_action_emb_dict[self.modality_scope[:-len('_source')]] = latent_action_emb
                 s_feat_dict[self.modality_scope[:-len('_source')]] = action_output
                 s_action_gt_dict[self.modality_scope[:-len('_source')]] = dataset_batch["actions"]
@@ -461,9 +494,12 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 # cont_loss += self.cont_alpha * cont_loss_part
 
                 # t_latent_encoder_emb_dict[self.modality_scope[:-len('_target')]] = latent_encoder_emb
-                t_latent_encoder_emb_dict[self.modality_scope[:-len('_target')]] = torch.cat([
-                    t_perceptual_emb['static'], t_perceptual_emb['gripper']
-                ], dim=-1)  # (bs,1,1024)
+                # t_latent_encoder_emb_dict[self.modality_scope[:-len('_target')]] = torch.cat([
+                #     t_perceptual_emb['static'], t_perceptual_emb['gripper']
+                # ], dim=-1)  # (bs,1,1024)
+                t_latent_encoder_emb_dict[self.modality_scope[:-len('_target')]] = t_perceptual_emb[
+                    'static']  # (bs,1,512)
+                t_latent_gripper_emb_dict[self.modality_scope[:-len('_target')]] = t_perceptual_emb['gripper']
                 t_latent_action_emb_dict[self.modality_scope[:-len('_target')]] = latent_action_emb  # (bs,10,512)
                 t_feat_dict[self.modality_scope[:-len('_target')]] = action_output
                 t_action_gt_dict[self.modality_scope[:-len('_target')]] = dataset_batch["actions"]
@@ -480,108 +516,163 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         # sort dict
         def sort_dict(dict1):
             return {key: dict1[key] for key in sorted(dict1.keys())}
+
         s_latent_encoder_emb_dict = sort_dict(s_latent_encoder_emb_dict)
         t_latent_encoder_emb_dict = sort_dict(t_latent_encoder_emb_dict)
         s_latent_action_emb_dict = sort_dict(s_latent_action_emb_dict)
         t_latent_action_emb_dict = sort_dict(t_latent_action_emb_dict)
 
-        # Domain Adaptation Loss
-        if is_discriminator_batch:
-            # update D
-            t_feat_for_da = torch.cat([v for v in t_latent_encoder_emb_dict.values()], dim=0)
-            s_feat_for_da = torch.cat([v for v in s_latent_encoder_emb_dict.values()], dim=0)
-            # t_feat_for_da = torch.cat([v for v in t_latent_action_emb_dict.values()], dim=0)
-            # s_feat_for_da = torch.cat([v for v in s_latent_action_emb_dict.values()], dim=0)
+        t_feat_for_da = torch.cat([v for v in t_latent_encoder_emb_dict.values()], dim=0)
+        s_feat_for_da = torch.cat([v for v in s_latent_encoder_emb_dict.values()], dim=0)
+        t_feat_for_da_2 = torch.cat([v for v in t_latent_gripper_emb_dict.values()], dim=0)
+        s_feat_for_da_2 = torch.cat([v for v in s_latent_gripper_emb_dict.values()], dim=0)
+        t_feat_for_da_act = torch.cat([v for v in t_latent_action_emb_dict.values()], dim=0)
+        s_feat_for_da_act = torch.cat([v for v in s_latent_action_emb_dict.values()], dim=0)
 
-            if len(self.cache_t_emb) < 20 and len(self.cache_s_emb) < 20:
-                t_keys = list(t_latent_action_emb_dict.keys())
-                s_keys = list(s_latent_action_emb_dict.keys())
-                t_key = t_keys[-1]
-                bs = t_latent_action_emb_dict[t_key].shape[0]
-                last_dim = t_latent_action_emb_dict[t_key].shape[-1]
-                # print(t_keys, s_keys, t_latent_action_emb_dict[t_key].shape)
-                self.cache_t_enc.append(t_latent_encoder_emb_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
-                self.cache_s_enc.append(s_latent_encoder_emb_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
-                self.cache_t_emb.append(t_latent_action_emb_dict[t_key].detach().cpu().reshape(bs, -1).numpy())
-                self.cache_s_emb.append(s_latent_action_emb_dict[t_key].detach().cpu().reshape(bs, -1).numpy())
-                # self.cache_t_emb.append(t_latent_action_emb_dict[t_key].detach().cpu().reshape(-1, last_dim).numpy())
-                # self.cache_s_emb.append(s_latent_action_emb_dict[t_key].detach().cpu().reshape(-1, last_dim).numpy())
-                self.cache_t_output.append(t_feat_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
-                self.cache_s_output.append(s_feat_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
-                self.cache_t_action_gt.append(t_action_gt_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
-                self.cache_s_action_gt.append(s_action_gt_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+        ''' 1. Update discriminator '''
+        if len(self.cache_t_emb) < 20 and len(self.cache_s_emb) < 20:
+            t_keys = list(t_latent_action_emb_dict.keys())
+            s_keys = list(s_latent_action_emb_dict.keys())
+            t_key = t_keys[-1]
+            bs = t_latent_action_emb_dict[t_key].shape[0]
+            last_dim = t_latent_action_emb_dict[t_key].shape[-1]
+            # print(t_keys, s_keys, t_latent_action_emb_dict[t_key].shape)
+            self.cache_t_enc.append(t_latent_encoder_emb_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_enc.append(s_latent_encoder_emb_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_emb.append(t_latent_action_emb_dict[t_key].detach().cpu().reshape(bs, -1).numpy())
+            self.cache_s_emb.append(s_latent_action_emb_dict[t_key].detach().cpu().reshape(bs, -1).numpy())
+            # self.cache_t_emb.append(t_latent_action_emb_dict[t_key].detach().cpu().reshape(-1, last_dim).numpy())
+            # self.cache_s_emb.append(s_latent_action_emb_dict[t_key].detach().cpu().reshape(-1, last_dim).numpy())
+            self.cache_t_output.append(t_feat_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_output.append(s_feat_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_action_gt.append(t_action_gt_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_action_gt.append(s_action_gt_dict[t_key].detach().float().cpu().reshape(bs, -1).numpy())
 
-            from mdt.datasets.utils.debug_utils import TSNEHelper
-            if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 400 == 0 and
-                    len(self.cache_t_emb) >= 20 and len(self.cache_s_emb) >= 20):
-                epoch_idx = self.current_epoch
-                tsne_inputs = np.concatenate(self.cache_t_enc + self.cache_s_enc, axis=0)
-                helper = TSNEHelper(tsne_inputs)
-                helper.plot_tsne(f'visual_enc_{epoch_idx:02d}_{batch_idx:05d}')
+        from mdt.datasets.utils.debug_utils import TSNEHelper
+        if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 400 == -1 and
+                len(self.cache_t_emb) >= 20 and len(self.cache_s_emb) >= 20):
+            epoch_idx = self.current_epoch
+            tsne_inputs = np.concatenate(self.cache_t_enc + self.cache_s_enc, axis=0)
+            helper = TSNEHelper(tsne_inputs)
+            helper.plot_tsne(f'visual_enc_{epoch_idx:02d}_{batch_idx:05d}')
 
-                # tsne_inputs = np.concatenate(self.cache_t_emb + self.cache_s_emb, axis=0)
-                # helper = TSNEHelper(tsne_inputs)
-                # helper.plot_tsne(f'action_embedding_{epoch_idx:02d}_{batch_idx:05d}')
+            # tsne_inputs = np.concatenate(self.cache_t_emb + self.cache_s_emb, axis=0)
+            # helper = TSNEHelper(tsne_inputs)
+            # helper.plot_tsne(f'action_embedding_{epoch_idx:02d}_{batch_idx:05d}')
 
-                tsne_inputs = np.concatenate(self.cache_t_output + self.cache_s_output, axis=0)
-                helper = TSNEHelper(tsne_inputs)
-                helper.plot_tsne(f'action_output_{epoch_idx:02d}_{batch_idx:05d}')
+            tsne_inputs = np.concatenate(self.cache_t_output + self.cache_s_output, axis=0)
+            helper = TSNEHelper(tsne_inputs)
+            helper.plot_tsne(f'action_output_{epoch_idx:02d}_{batch_idx:05d}')
 
-                # tsne_inputs = np.concatenate(self.cache_t_action_gt + self.cache_s_action_gt, axis=0)
-                # helper = TSNEHelper(tsne_inputs)
-                # helper.plot_tsne(f'action_gt_{epoch_idx:02d}_{batch_idx:05d}')
+            # tsne_inputs = np.concatenate(self.cache_t_action_gt + self.cache_s_action_gt, axis=0)
+            # helper = TSNEHelper(tsne_inputs)
+            # helper.plot_tsne(f'action_gt_{epoch_idx:02d}_{batch_idx:05d}')
 
-                self.cache_t_enc = []
-                self.cache_s_enc = []
-                self.cache_t_action_gt = []
-                self.cache_s_action_gt = []
-                self.cache_t_output = []
-                self.cache_s_output = []
-                self.cache_t_emb = []
-                self.cache_s_emb = []
+            self.cache_t_enc = []
+            self.cache_s_enc = []
+            self.cache_t_action_gt = []
+            self.cache_s_action_gt = []
+            self.cache_t_output = []
+            self.cache_s_output = []
+            self.cache_t_emb = []
+            self.cache_s_emb = []
 
-            da_loss_dict = self.da_loss.forward(
-                t_feat_for_da.detach(),  # avoid grad of G_target
-                s_feat_for_da.detach(),  # avoid grad of G_source
+        da_loss_dict = self.da_loss.forward(
+            t_feat_for_da.clone().detach(),  # avoid grad of G_target
+            s_feat_for_da.detach(),  # avoid grad of G_source
+            is_discriminator_batch=True,
+        )
+        da_d_loss = da_loss_dict['loss']
+        w_dist = da_loss_dict['w_dist']
+        gp = da_loss_dict['gp']  # just for log
+        da_d_loss = da_d_loss / 1  # choose 1 from 2
+        losses['da_d_loss'] += da_d_loss
+        losses['w_dist_1'] = w_dist
+        losses['gp_1'] = gp
+
+        da_2_loss_dict = self.da_2_loss.forward(
+            t_feat_for_da_2.clone().detach(),  # avoid grad of G_target
+            s_feat_for_da_2.detach(),  # avoid grad of G_source
+            is_discriminator_batch=True,
+        )
+        da_d_2_loss = da_2_loss_dict['loss']
+        w_dist = da_2_loss_dict['w_dist']
+        gp = da_2_loss_dict['gp']  # just for log
+        losses['da_d_loss'] += da_d_2_loss / 1
+        losses['w_dist_2'] = w_dist
+        losses['gp_2'] = gp
+
+        if self.use_da_act:
+            da_act_loss_dict = self.da_act_loss.forward(
+                t_feat_for_da_act.clone().detach(),  # avoid grad of G_target
+                s_feat_for_da_act.detach(),  # avoid grad of G_source
                 is_discriminator_batch=True,
             )
-            self.cache_da_d_loss = da_d_loss = da_loss_dict['loss']
-            self.cache_wdist = w_dist = da_loss_dict['w_dist']
-            da_g_loss = self.cache_da_g_loss
-            gp = da_loss_dict['gp']  # just for log
+            da_d_act_loss = da_act_loss_dict['loss']
+            w_dist = da_2_loss_dict['w_dist']
+            gp = da_2_loss_dict['gp']  # just for log
+            losses['da_d_loss'] += da_d_act_loss / 1
+            losses['w_dist_act'] = w_dist
+            losses['gp_act'] = gp
 
-        else:
-            # update G
-            t_feat_for_da = torch.cat([v for v in t_latent_encoder_emb_dict.values()], dim=0)
-            # t_feat_for_da = torch.cat([v for v in t_latent_action_emb_dict.values()], dim=0)
-            s_feat_for_da = t_feat_for_da  # not used
-            da_loss_dict = self.da_loss.forward(
-                t_feat_for_da,           # update G_target
-                s_feat_for_da.detach(),  # avoid grad of G_source
+        d_opt.zero_grad()
+        self.manual_backward(losses['da_d_loss'])
+        d_opt.step()
+        d_sch.step()
+
+        ''' 2. Update generator '''
+        da_loss_dict = self.da_loss.forward(
+            t_feat_for_da,  # update G_target
+            s_feat_for_da.detach(),  # avoid grad of G_source
+            is_discriminator_batch=False,
+        )
+        da_g_loss = da_loss_dict['loss']
+        gp = da_loss_dict['gp']  # just for log
+        da_g_loss = da_g_loss / 1  # choose 1 from 2
+        losses['da_g_loss'] += da_g_loss
+
+        da_2_loss_dict = self.da_2_loss.forward(
+            t_feat_for_da_2,  # update G_target
+            s_feat_for_da_2.detach(),  # avoid grad of G_source
+            is_discriminator_batch=False,
+        )
+        da_g_2_loss = da_2_loss_dict['loss']
+        gp = da_2_loss_dict['gp']  # just for log
+        losses['da_g_loss'] += da_g_2_loss / 1
+
+        if self.use_da_act:
+            da_act_loss_dict = self.da_act_loss.forward(
+                t_feat_for_da_act,  # update G_target
+                s_feat_for_da_act.detach(),  # avoid grad of G_source
                 is_discriminator_batch=False,
             )
-            self.cache_da_g_loss = da_g_loss = da_loss_dict['loss']
-            w_dist = self.cache_wdist
-            da_d_loss = self.cache_da_d_loss
-            gp = da_loss_dict['gp']  # just for log
+            da_g_act_loss = da_act_loss_dict['loss']
+            gp = da_act_loss_dict['gp']  # just for log
+            da_g_act_loss += da_g_act_loss / 1
+            losses['da_g_act_loss'] += da_g_act_loss / 1
 
-        cont_loss = cont_loss / t_batch_len  # used
-        action_loss = action_loss / batch_len  # NOT used
-        img_gen_loss = img_gen_loss / t_batch_len  # used
-        da_d_loss = da_d_loss / 1  # choose 1 from 2
-        da_g_loss = da_g_loss / 1  # choose 1 from 2
-        da_loss = da_d_loss if is_discriminator_batch else da_g_loss
-        # da_loss = da_d_loss = da_g_loss = 0.  # DEBUG close da_loss
-        total_loss = da_loss + img_gen_loss + cont_loss + action_loss
+            g_act_opt.zero_grad()
+            self.manual_backward(losses['da_g_act_loss'], retain_graph=True)
+            g_act_opt.step()
+            g_act_sch.step()
+
+        losses['cont_loss'] += cont_loss / t_batch_len  # used
+        losses['action_loss'] += action_loss / batch_len  # NOT used
+        losses['img_gen_loss'] += img_gen_loss / t_batch_len  # used
+
+        backward_loss = losses['da_g_loss'] + losses['img_gen_loss'] + losses['cont_loss'] + losses['action_loss']
+        losses['total_loss'] = backward_loss + losses['da_g_act_loss']
+
+        g_opt.zero_grad()
+        self.manual_backward(backward_loss)
+        if not self.automatic_optimization:
+            self.on_before_zero_grad()
+        g_opt.step()
+        g_sch.step()
 
         # Log the metrics
-        # self.on_before_zero_grad()
-        self._log_training_metrics(action_loss, total_loss, cont_loss, img_gen_loss, da_d_loss, da_g_loss,
-                                   w_dist, gp,
-                                   total_bs)
-        self.manual_backward(total_loss)
-        opt.step()
-        # sch.step()
+        self._log_training_metrics(losses, total_bs)
+
         return total_loss
 
     @torch.no_grad()
@@ -603,7 +694,6 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         output = {}
         val_total_act_loss_pp = torch.tensor(0.0).to(self.device)
         for self.modality_scope, dataset_batch in batch.items():
-            print('Validating', self.modality_scope)
             if "source" in self.modality_scope:
                 continue
             # Compute the required embeddings
@@ -781,20 +871,13 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         else:
             return torch.tensor(0.0).to(self.device)  # Return a zero tensor if "lang" is not in the modality scope
 
-    def _log_training_metrics(self, action_loss, total_loss, cont_loss, img_gen_loss, da_d_loss, da_g_loss,
-                              w_dist, gp,
-                              total_bs):
+    def _log_training_metrics(self, log_dict, total_bs):
         """
         Log the training metrics.
         """
-        self.log("train/action_loss", action_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/total_loss", total_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/cont_loss", cont_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/img_gen_loss", img_gen_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/da_d_loss", da_d_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/da_g_loss", da_g_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/w_dist(s-t)", w_dist, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/gp", gp, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
+        for k, v in log_dict.items():
+            self.log(f"train/{k}", v.clone().detach(),
+                     on_step=True, on_epoch=False, sync_dist=True, batch_size=total_bs)
 
     def _log_validation_metrics(self, pred_loss, img_gen_loss, val_total_act_loss_pp):
         """
@@ -1009,7 +1092,6 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         """
         Method for doing inference with the model.
         """
-        print('[DEBUG] goal:', goal)
         if 'lang' in goal:
             modality = 'lang'
             if self.use_text_not_embedding:

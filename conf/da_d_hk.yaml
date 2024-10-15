@@ -19,7 +19,7 @@ slurm: false
 min_window_size: 21
 max_window_size: 50
 future_range: 29
-seed: 242
+seed: 242  # ori:242
 device: 'cuda'
 batch_size: 128  # ori:128
 devices: 4
@@ -33,7 +33,7 @@ multistep: 10
 p_last_state: 0
 gen_img_res: 112
 max_epochs: 21
-rollout_lh_skip_epochs: 1
+rollout_lh_skip_epochs: 3
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 12
@@ -48,7 +48,7 @@ trainer:
   max_epochs: ${max_epochs}
   sync_batchnorm: false
   accelerator: auto
-  limit_train_batches: 1000
+  limit_train_batches: 500
   limit_val_batches: 4
 
 logger:

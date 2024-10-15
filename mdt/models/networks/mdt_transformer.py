@@ -191,6 +191,14 @@ class MDTTransformer(nn.Module):
             "number of parameters: %e", sum(p.numel() for p in self.parameters())
         )
 
+    def freeze_backbone(self):
+        for name, param in self.named_parameters():
+            param.requires_grad = False
+        self.decoder.unfreeze_final_layers()
+
+    def trainable_params(self):
+        return filter(lambda p: p.requires_grad, self.parameters())
+
     def get_block_size(self):
         return self.block_size
 

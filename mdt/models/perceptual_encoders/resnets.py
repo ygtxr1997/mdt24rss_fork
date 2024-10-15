@@ -127,6 +127,13 @@ class BesoResNetEncoder(nn.Module):
         self.use_mlp = use_mlp
         if self.use_mlp:
             self.fc_layers = nn.Sequential(nn.Linear(n_inputs, latent_dim))
+            self.dropout = nn.Dropout(p=0.3, inplace=True)
+
+    def freeze_backbone(self):
+        freeze_params(self.backbone)
+
+    def trainable_params(self):
+        return filter(lambda p: p.requires_grad, self.parameters())
 
     def conv_forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.backbone(x)
@@ -149,6 +156,7 @@ class BesoResNetEncoder(nn.Module):
         x = self.conv_forward(x)
         if self.use_mlp:
             x = self.fc_layers(x)
+            x = self.dropout(x)
         
         if time_series:
             x = einops.rearrange(x, '(b t) d -> b t d', b=batch_size, t=t_steps, d=self.latent_dim)        

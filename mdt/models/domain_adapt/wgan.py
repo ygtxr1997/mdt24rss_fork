@@ -99,11 +99,11 @@ class StyleVectorizer(nn.Module):
         super(StyleVectorizer, self).__init__()
 
         layers = [
-            torch.nn.LayerNorm(in_dim, eps=1e-6),
+            # torch.nn.LayerNorm(in_dim, eps=1e-6),
             nn.Linear(in_dim, out_dim),  # reduce dim
             leaky_relu(),
         ]
-        for i in range(depth):
+        for i in range(depth - 1):
             layers.extend([EqualLinear(out_dim, out_dim, lr_mul), leaky_relu()])
 
         self.net = nn.Sequential(*layers)
@@ -116,7 +116,9 @@ class StyleVectorizer(nn.Module):
 
 from torch.autograd import grad
 class WGAN_GP(torch.nn.Module):
-    def __init__(self, in_dim: int = 3 * 512):
+    def __init__(self, in_dim: int = 3 * 512, reduce_scale = 2,
+                 gamma: float = 10,
+                 ):
         super(WGAN_GP, self).__init__()
         # self.discriminator = nn.Sequential(
         #     nn.Linear(in_dim, in_dim),
@@ -125,12 +127,11 @@ class WGAN_GP(torch.nn.Module):
         #     nn.GELU(),
         #     nn.Linear(in_dim // 2, 1),
         # )
-        reduce_scale = 1
         self.discriminator = nn.Sequential(
-            StyleVectorizer(in_dim, in_dim // reduce_scale, depth=1, lr_mul=1),
+            StyleVectorizer(in_dim, in_dim // reduce_scale, depth=2, lr_mul=1),
             nn.Linear(in_dim // reduce_scale, 1),
         )
-        self.gamma = 10
+        self.gamma = gamma
         self.wd_clf = 1
 
         self.cache_wdist = 0.

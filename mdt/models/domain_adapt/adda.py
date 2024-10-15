@@ -17,11 +17,11 @@ class ADDALoss(nn.Module):
     def __init__(self, in_dim: int = 3 * 512):
         super(ADDALoss, self).__init__()
         self.discriminator = nn.Sequential(
-            nn.Linear(in_dim, in_dim),
+            nn.Linear(in_dim, in_dim // 2),  # only one encoder
             nn.GELU(),
-            nn.Linear(in_dim, in_dim),
+            nn.Linear(in_dim // 2, in_dim // 2),
             nn.GELU(),
-            nn.Linear(in_dim, 2),
+            nn.Linear(in_dim // 2, 2),
         )
         self.criterion = nn.CrossEntropyLoss()
 

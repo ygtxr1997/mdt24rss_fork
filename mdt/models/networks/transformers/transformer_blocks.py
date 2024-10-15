@@ -308,6 +308,10 @@ class ConditionedBlock(Block):
         
         return x
 
+    def unfreeze_final_layers(self):
+        self.mlp.requires_grad_(True)
+
+
 class NoiseBlock(Block):
     """
     Block with AdaLN-Zero conditioning.
@@ -567,6 +571,9 @@ class TransformerFiLMDecoder(nn.Module):
             x = layer(x, c, cond, custom_attn_mask=custom_attn_mask)
         x = self.ln(x)
         return x
+
+    def unfreeze_final_layers(self):
+        self.blocks[-1].unfreeze_final_layers()
 
 
 class TransformerFiLMDecoderInterleaved(nn.Module):
