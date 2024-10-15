@@ -1463,7 +1463,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             # for p in self.da_loss.parameters():
             #     p.data.clamp_(-self.weight_cliping_limit, self.weight_cliping_limit)
 
-            da_d_loss = self.da_loss.forward(
+            da_d_loss = self.da_vis1_loss.forward(
                 t_perceptual_emb['state_images'].detach(),  # avoid grad
                 s_perceptual_emb['state_images'].detach(),  # avoid grad
                 is_discriminator_batch=True,
@@ -1473,7 +1473,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         else:
             # update G
             s_perceptual_emb = t_perceptual_emb  # not used
-            da_g_loss = self.da_loss.forward(
+            da_g_loss = self.da_vis1_loss.forward(
                 t_perceptual_emb['state_images'],
                 s_perceptual_emb['state_images'].detach(),  # avoid grad
                 is_discriminator_batch=False,

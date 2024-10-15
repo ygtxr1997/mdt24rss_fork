@@ -139,9 +139,11 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.source_model = copy.deepcopy(self.model)
         self.placeholder_param = torch.nn.Parameter(torch.ones([1]))
         # For domain adaptation
+        self.use_da_visual: bool = domain_adapt.use_da_visual
         self.use_da_act: bool = domain_adapt.use_da_act
-        self.da_loss = hydra.utils.instantiate(domain_adapt.visual_da).to(self.device)
-        self.da_2_loss = hydra.utils.instantiate(domain_adapt.visual_da).to(self.device)
+        if self.use_da_visual:
+            self.da_vis1_loss = hydra.utils.instantiate(domain_adapt.visual_da).to(self.device)
+            self.da_vis2_loss = hydra.utils.instantiate(domain_adapt.visual_da).to(self.device)
         if self.use_da_act:
             self.da_act_loss = hydra.utils.instantiate(domain_adapt.action_da).to(self.device)
         self.cache_da_d_loss = 0.
@@ -198,10 +200,11 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         Initialize optimizers and learning rate schedulers based on model configuration.
         """
         # Configuration for models using transformer weight decay
-        g_optim_groups = []
+        g_visual_optim_groups = []
         g_act_optim_groups = []
         d_optim_groups = []
 
+        ''' Frozen modules '''
         self.set_requires_grad(self.visual_goal, False)
         self.set_requires_grad(self.source_static_resnet, False)
         self.set_requires_grad(self.source_gripper_resnet, False)
@@ -211,29 +214,45 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         # self.set_requires_grad(self.clip_proj, False)
         # self.logit_scale.requires_grad = False
 
+        ''' Visual Encoder '''
+        if self.use_da_visual:
+            self.set_requires_grad(self.static_resnet, True)
+            self.set_requires_grad(self.gripper_resnet, True)
+            self.static_resnet.freeze_backbone()
+            self.gripper_resnet.freeze_backbone()
+            g_visual_optim_groups.extend([
+                {"params": self.static_resnet.trainable_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+                {"params": self.gripper_resnet.trainable_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            ])
+        else:
+            self.set_requires_grad(self.static_resnet, False)
+            self.set_requires_grad(self.gripper_resnet, False)
+            g_visual_optim_groups.extend([{"params": self.placeholder_param}])  # placeholder
+        g_visual_optim_groups.extend([
+            # {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
+            # {"params": self.logit_scale, "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
+        ])
+
+        ''' Transformer Encoder & Decoder '''
         self.set_requires_grad(self.model, False)
         if self.use_da_act:
             self.set_requires_grad(self.model, True)
-            self.model.inner_model.freeze_backbone()
+            # self.model.inner_model.freeze_backbone()
             g_act_optim_groups.extend([
                 {"params": self.model.inner_model.trainable_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
                 # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             ])
         else:
-            g_act_optim_groups.extend([
-                {"params": self.placeholder_param,"weight_decay": self.optimizer_config.transformer_weight_decay}
-            ])
-        g_optim_groups.extend([
-            # {"params": self.clip_proj.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
-            # {"params": self.logit_scale, "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
-        ])
+            g_act_optim_groups.extend([{"params": self.placeholder_param}])  # placeholder
 
-        self.set_requires_grad(self.da_loss, True)
-        self.set_requires_grad(self.da_2_loss, True)
-        d_optim_groups.extend([
-            {"params": self.da_loss.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            {"params": self.da_2_loss.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-        ])
+        ''' Adaptation Discriminator '''
+        if self.use_da_visual:
+            self.set_requires_grad(self.da_vis1_loss, True)
+            self.set_requires_grad(self.da_vis2_loss, True)
+            d_optim_groups.extend([
+                {"params": self.da_vis1_loss.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+                {"params": self.da_vis2_loss.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            ])
         if self.use_da_act:
             self.set_requires_grad(self.da_act_loss, True)
             d_optim_groups.extend([
@@ -241,34 +260,23 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                  "weight_decay": self.optimizer_config.transformer_weight_decay},
             ])
 
-        self.set_requires_grad(self.static_resnet, True)
-        self.set_requires_grad(self.gripper_resnet, True)
-        self.static_resnet.freeze_backbone()
-        self.gripper_resnet.freeze_backbone()
-        g_optim_groups.extend([
-            {"params": self.static_resnet.trainable_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-            {"params": self.gripper_resnet.trainable_params(), "weight_decay": self.optimizer_config.transformer_weight_decay},
-        ])
-
-        # g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
-        #                                 betas=self.optimizer_config.betas)
-        # d_optimizer = torch.optim.AdamW(d_optim_groups, lr=self.optimizer_config.learning_rate,
-        #                                 betas=self.optimizer_config.betas)
-        g_optimizer = torch.optim.AdamW(g_optim_groups, lr=self.optimizer_config.learning_rate,
+        ''' Optimizer '''
+        g_visual_optimizer = torch.optim.AdamW(g_visual_optim_groups, lr=self.optimizer_config.learning_rate,
                                         betas=self.optimizer_config.betas)
         g_act_optimizer = torch.optim.AdamW(g_act_optim_groups, lr=self.optimizer_config.learning_rate,
                                             betas=self.optimizer_config.betas)
         d_optimizer = torch.optim.AdamW(d_optim_groups, lr=self.optimizer_config.da_lr,
                                         betas=self.optimizer_config.da_betas)
 
+        ''' Learning Rate Scheduler '''
         # Optionally initialize the scheduler
         if self.use_lr_scheduler:
             da_lr_configs = OmegaConf.create(self.lr_scheduler.da_lr_scheduler)
-            g_lr_configs = OmegaConf.create(self.lr_scheduler.enc_lr_scheduler)
+            g_vis_lr_configs = OmegaConf.create(self.lr_scheduler.enc_lr_scheduler)
             g_act_lr_configs = OmegaConf.create(self.lr_scheduler.enc_lr_scheduler)
-            g_scheduler = TriStageLRScheduler(g_optimizer, g_lr_configs)
-            g_lr_scheduler = {
-                "scheduler": g_scheduler,
+            g_vis_scheduler = TriStageLRScheduler(g_visual_optimizer, g_vis_lr_configs)
+            g_vis_lr_scheduler = {
+                "scheduler": g_vis_scheduler,
                 "interval": 'step',
                 "frequency": 1,
             }
@@ -285,8 +293,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 "frequency": 1,
             }
             return (
-                {"optimizer": g_optimizer,
-                 "lr_scheduler": g_lr_scheduler,
+                {"optimizer": g_visual_optimizer,
+                 "lr_scheduler": g_vis_lr_scheduler,
                  },
                 {"optimizer": g_act_optimizer,
                  "lr_scheduler": g_act_lr_scheduler,
@@ -296,7 +304,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                  },
             )
         else:
-            return g_optimizer, g_act_optimizer, d_optimizer
+            return g_visual_optimizer, g_act_optimizer, d_optimizer
 
     @staticmethod
     def set_requires_grad(model, requires_grad=True):
@@ -353,8 +361,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         Returns:
             loss tensor
         """
-        g_opt, g_act_opt, d_opt = self.optimizers(use_pl_optimizer=True)  # pl_optimizer doesn't support AMP training
-        g_sch, g_act_sch, d_sch = self.lr_schedulers()
+        g_vis_opt, g_act_opt, d_opt = self.optimizers(use_pl_optimizer=True)  # PL optimizer handles grad_scaling
+        g_vis_sch, g_act_sch, d_sch = self.lr_schedulers()
 
         total_loss, action_loss, cont_loss, id_loss, img_gen_loss, da_d_loss, da_g_loss = (
             torch.tensor(0.0).to(self.device),
@@ -577,30 +585,31 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             self.cache_t_emb = []
             self.cache_s_emb = []
 
-        da_loss_dict = self.da_loss.forward(
-            t_feat_for_da.clone().detach(),  # avoid grad of G_target
-            s_feat_for_da.detach(),  # avoid grad of G_source
-            is_discriminator_batch=True,
-        )
-        da_d_loss = da_loss_dict['loss']
-        w_dist = da_loss_dict['w_dist']
-        gp = da_loss_dict['gp']  # just for log
-        da_d_loss = da_d_loss / 1  # choose 1 from 2
-        losses['da_d_loss'] += da_d_loss
-        losses['w_dist_1'] = w_dist
-        losses['gp_1'] = gp
+        if self.use_da_visual:
+            da_loss_dict = self.da_vis1_loss.forward(
+                t_feat_for_da.clone().detach(),  # avoid grad of G_target
+                s_feat_for_da.detach(),  # avoid grad of G_source
+                is_discriminator_batch=True,
+            )
+            da_d_loss = da_loss_dict['loss']
+            w_dist = da_loss_dict['w_dist']
+            gp = da_loss_dict['gp']  # just for log
+            da_d_loss = da_d_loss / 1  # choose 1 from 2
+            losses['da_d_loss'] += da_d_loss
+            losses['w_dist_1'] = w_dist
+            losses['gp_1'] = gp
 
-        da_2_loss_dict = self.da_2_loss.forward(
-            t_feat_for_da_2.clone().detach(),  # avoid grad of G_target
-            s_feat_for_da_2.detach(),  # avoid grad of G_source
-            is_discriminator_batch=True,
-        )
-        da_d_2_loss = da_2_loss_dict['loss']
-        w_dist = da_2_loss_dict['w_dist']
-        gp = da_2_loss_dict['gp']  # just for log
-        losses['da_d_loss'] += da_d_2_loss / 1
-        losses['w_dist_2'] = w_dist
-        losses['gp_2'] = gp
+            da_2_loss_dict = self.da_vis2_loss.forward(
+                t_feat_for_da_2.clone().detach(),  # avoid grad of G_target
+                s_feat_for_da_2.detach(),  # avoid grad of G_source
+                is_discriminator_batch=True,
+            )
+            da_d_2_loss = da_2_loss_dict['loss']
+            w_dist = da_2_loss_dict['w_dist']
+            gp = da_2_loss_dict['gp']  # just for log
+            losses['da_d_loss'] += da_d_2_loss / 1
+            losses['w_dist_2'] = w_dist
+            losses['gp_2'] = gp
 
         if self.use_da_act:
             da_act_loss_dict = self.da_act_loss.forward(
@@ -609,37 +618,18 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 is_discriminator_batch=True,
             )
             da_d_act_loss = da_act_loss_dict['loss']
-            w_dist = da_2_loss_dict['w_dist']
-            gp = da_2_loss_dict['gp']  # just for log
+            w_dist = da_act_loss_dict['w_dist']
+            gp = da_act_loss_dict['gp']  # just for log
             losses['da_d_loss'] += da_d_act_loss / 1
             losses['w_dist_act'] = w_dist
             losses['gp_act'] = gp
 
-        d_opt.zero_grad()
+        d_opt.zero_grad()  # multiple discriminators share the same optimizer
         self.manual_backward(losses['da_d_loss'])
         d_opt.step()
         d_sch.step()
 
         ''' 2. Update generator '''
-        da_loss_dict = self.da_loss.forward(
-            t_feat_for_da,  # update G_target
-            s_feat_for_da.detach(),  # avoid grad of G_source
-            is_discriminator_batch=False,
-        )
-        da_g_loss = da_loss_dict['loss']
-        gp = da_loss_dict['gp']  # just for log
-        da_g_loss = da_g_loss / 1  # choose 1 from 2
-        losses['da_g_loss'] += da_g_loss
-
-        da_2_loss_dict = self.da_2_loss.forward(
-            t_feat_for_da_2,  # update G_target
-            s_feat_for_da_2.detach(),  # avoid grad of G_source
-            is_discriminator_batch=False,
-        )
-        da_g_2_loss = da_2_loss_dict['loss']
-        gp = da_2_loss_dict['gp']  # just for log
-        losses['da_g_loss'] += da_g_2_loss / 1
-
         if self.use_da_act:
             da_act_loss_dict = self.da_act_loss.forward(
                 t_feat_for_da_act,  # update G_target
@@ -652,24 +642,45 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             losses['da_g_act_loss'] += da_g_act_loss / 1
 
             g_act_opt.zero_grad()
-            self.manual_backward(losses['da_g_act_loss'], retain_graph=True)
+            retain_graph = self.use_da_visual  # Keep backward graph for later modules
+            self.manual_backward(losses['da_g_act_loss'], retain_graph=retain_graph)
             g_act_opt.step()
             g_act_sch.step()
 
-        losses['cont_loss'] += cont_loss / t_batch_len  # used
-        losses['action_loss'] += action_loss / batch_len  # NOT used
-        losses['img_gen_loss'] += img_gen_loss / t_batch_len  # used
+        if self.use_da_visual:
+            da_loss_dict = self.da_vis1_loss.forward(
+                t_feat_for_da,  # update G_target
+                s_feat_for_da.detach(),  # avoid grad of G_source
+                is_discriminator_batch=False,
+            )
+            da_g_loss = da_loss_dict['loss']
+            gp = da_loss_dict['gp']  # just for log
+            da_g_loss = da_g_loss / 1  # choose 1 from 2
+            losses['da_g_loss'] += da_g_loss
 
-        backward_loss = losses['da_g_loss'] + losses['img_gen_loss'] + losses['cont_loss'] + losses['action_loss']
-        losses['total_loss'] = backward_loss + losses['da_g_act_loss']
+            da_2_loss_dict = self.da_vis2_loss.forward(
+                t_feat_for_da_2,  # update G_target
+                s_feat_for_da_2.detach(),  # avoid grad of G_source
+                is_discriminator_batch=False,
+            )
+            da_g_2_loss = da_2_loss_dict['loss']
+            gp = da_2_loss_dict['gp']  # just for log
+            losses['da_g_loss'] += da_g_2_loss / 1
 
-        g_opt.zero_grad()
-        self.manual_backward(backward_loss)
+            losses['cont_loss'] += cont_loss / t_batch_len  # used
+            losses['action_loss'] += action_loss / batch_len  # NOT used
+            losses['img_gen_loss'] += img_gen_loss / t_batch_len  # used
+
+            backward_loss = losses['da_g_loss'] + losses['img_gen_loss'] + losses['cont_loss'] + losses['action_loss']
+            losses['total_loss'] = backward_loss + losses['da_g_act_loss']
+
+            g_vis_opt.zero_grad()
+            self.manual_backward(backward_loss)
+            g_vis_opt.step()
+            g_vis_sch.step()
+
         if not self.automatic_optimization:
             self.on_before_zero_grad()
-        g_opt.step()
-        g_sch.step()
-
         # Log the metrics
         self._log_training_metrics(losses, total_bs)
 

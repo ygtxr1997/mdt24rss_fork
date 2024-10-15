@@ -3,11 +3,16 @@
 visual_da:
   _target_: mdt.models.domain_adapt.wgan.WGAN_GP
   in_dim: 512  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512
+  reduce_scale: 2
+  ndims: 2
+  gamma: 2
 
 action_da:
   _target_: mdt.models.domain_adapt.wgan.WGAN_GP
-  in_dim: 5120  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512
-  reduce_scale: 20
+  in_dim: 512  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512
+  reduce_scale: 8
+  gamma: 10
+  ndims: 3
 
+use_da_visual: true
 use_da_act: false
-gamma: 2

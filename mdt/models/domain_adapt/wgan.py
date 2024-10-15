@@ -114,23 +114,60 @@ class StyleVectorizer(nn.Module):
 #*********************************************
 
 
+class Discriminator1d(torch.nn.Module):
+    def __init__(self, in_dim: int, reduce_scale: int, dropout=0.2):
+        super(Discriminator1d, self).__init__()
+        self.style_mlp = StyleVectorizer(in_dim, in_dim // reduce_scale, depth=2, lr_mul=1)
+        self.dropout = nn.Dropout(dropout)
+        self.logit_out = nn.Linear(in_dim // reduce_scale, 1)
+    def forward(self, x):
+        return self.logit_out(self.dropout(self.style_mlp(x)))
+
+
+class Discriminator2d(torch.nn.Module):
+    def __init__(self, in_dim, reduce_scale, dropout_prob=0.2):
+        super(Discriminator2d, self).__init__()
+        filter_sizes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        filter_dims = [100, 200, 200, 200, 200, 100, 100, 100, 100, 100]
+        assert len(filter_sizes) == len(filter_dims)
+        inner_dim = in_dim // reduce_scale
+        self.embed = nn.Linear(in_dim, inner_dim)
+        self.convs = nn.ModuleList([
+            nn.Conv2d(1, dim, (f_size, inner_dim)) for f_size, dim in zip(filter_sizes, filter_dims)
+        ])
+        self.highway = nn.Linear(sum(filter_dims), sum(filter_dims))
+        self.dropout = nn.Dropout(p=dropout_prob)
+        self.fc = nn.Linear(sum(filter_dims), 1)
+
+    def forward(self, x):
+        """
+        Inputs: x
+            - x: (B,T,D)
+        Outputs: out
+            - out: (B,1)
+        """
+        emb = self.embed(x).unsqueeze(1)  # (B,1,T,D)
+        convs = [F.relu(conv(emb)).squeeze(3) for conv in self.convs]  # [batch_size * num_filter * seq_len]
+        pools = [F.max_pool1d(conv, conv.size(2)).squeeze(2) for conv in convs]  # [batch_size * num_filter]
+        out = torch.cat(pools, 1)  # batch_size * sum(num_filters)
+        highway = self.highway(out)
+        transform = F.sigmoid(highway)
+        out = transform * F.relu(highway) + (1. - transform) * out  # sets C = 1 - T
+        # out = F.log_softmax(self.fc(self.dropout(out)), dim=1)  # batch * num_classes
+        out = self.fc(self.dropout(out))
+        return out
+
+
 from torch.autograd import grad
 class WGAN_GP(torch.nn.Module):
     def __init__(self, in_dim: int = 3 * 512, reduce_scale = 2,
-                 gamma: float = 10,
+                 gamma: float = 10, ndims: int = 2,
                  ):
         super(WGAN_GP, self).__init__()
-        # self.discriminator = nn.Sequential(
-        #     nn.Linear(in_dim, in_dim),
-        #     nn.GELU(),
-        #     nn.Linear(in_dim, in_dim // 2),
-        #     nn.GELU(),
-        #     nn.Linear(in_dim // 2, 1),
-        # )
-        self.discriminator = nn.Sequential(
-            StyleVectorizer(in_dim, in_dim // reduce_scale, depth=2, lr_mul=1),
-            nn.Linear(in_dim // reduce_scale, 1),
-        )
+        if ndims == 2:  # (B,D)
+            self.discriminator = Discriminator1d(in_dim, reduce_scale)
+        elif ndims == 3:  # (B,T,D)
+            self.discriminator = Discriminator2d(in_dim, reduce_scale)
         self.gamma = gamma
         self.wd_clf = 1
 
@@ -146,8 +183,8 @@ class WGAN_GP(torch.nn.Module):
         elif target_feat.shape[0] > source_feat.shape[0]:
             target_feat = target_feat[:source_feat.shape[0]]
         bs = source_feat.shape[0]
-        source_feat = source_feat.view(bs, -1)
-        target_feat = target_feat.view(bs, -1)
+        # source_feat = source_feat.view(bs, -1)
+        # target_feat = target_feat.view(bs, -1)
         device = source_feat.device
 
         if is_discriminator_batch:
@@ -169,10 +206,13 @@ class WGAN_GP(torch.nn.Module):
 
     def gradient_penalty(self, critic, h_s, h_t, device):
         # based on: https://github.com/caogang/wgan-gp/blob/master/gan_cifar10.py#L116
-        alpha = torch.rand(h_s.size(0), 1).to(device)
+        alpha = torch.rand(h_s.size(0)).to(device)
+        while alpha.ndim < h_s.ndim:
+            alpha = alpha.unsqueeze(-1)
         differences = h_t - h_s
         interpolates = h_s + (alpha * differences)
-        interpolates = torch.stack([interpolates, h_s, h_t]).requires_grad_()
+        interpolates.requires_grad_(True)
+        # interpolates = torch.stack([interpolates, h_s, h_t]).requires_grad_()
 
         preds = critic(interpolates)
         gradients = grad(preds, interpolates,

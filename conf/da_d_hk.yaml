@@ -19,7 +19,7 @@ slurm: false
 min_window_size: 21
 max_window_size: 50
 future_range: 29
-seed: 242  # ori:242
+seed: 37  # ori:242
 device: 'cuda'
 batch_size: 128  # ori:128
 devices: 4
