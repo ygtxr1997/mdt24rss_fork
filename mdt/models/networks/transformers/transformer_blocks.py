@@ -288,6 +288,7 @@ class ConditionedBlock(Block):
                          rotary_xpos=rotary_xpos, 
                          bias=bias)
         self.adaLN_zero = AdaLNZero(film_cond_dim)
+        self.cache_ca_out = None
 
     def forward(self, x, c, context=None, custom_attn_mask=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_zero(c)
@@ -299,7 +300,8 @@ class ConditionedBlock(Block):
         
         # Cross attention if used
         if self.use_cross_attention and context is not None:
-            x = x + self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask)
+            self.cache_ca_out = x + self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask)
+            x = self.cache_ca_out
         
         # MLP with modulation
         x_mlp = self.ln_2(x)
@@ -310,6 +312,14 @@ class ConditionedBlock(Block):
 
     def unfreeze_final_layers(self):
         self.mlp.requires_grad_(True)
+
+    def unfreeze_cross_attention(self):
+        if self.use_cross_attention:
+            # self.cross_att.requires_grad_(True)  # TODO: which is better?
+            self.cross_att.key.requires_grad_(True)
+            self.cross_att.value.requires_grad_(True)
+            return True
+        return False
 
 
 class NoiseBlock(Block):
@@ -565,15 +575,26 @@ class TransformerFiLMDecoder(nn.Module):
                 for _ in range(n_layers)]
             )
         self.ln = LayerNorm(embed_dim, bias)
+        self.cache_ca_out = []
 
     def forward(self, x, c, cond=None, custom_attn_mask=None):
+        self.cache_ca_out = []
         for layer in self.blocks:
             x = layer(x, c, cond, custom_attn_mask=custom_attn_mask)
+            if layer.cache_ca_out is not None:
+                self.cache_ca_out.append(layer.cache_ca_out)
         x = self.ln(x)
         return x
 
     def unfreeze_final_layers(self):
         self.blocks[-1].unfreeze_final_layers()
+
+    def unfreeze_cross_attention(self):
+        unfrozen_cnt = 0
+        for block in self.blocks:
+            has_cross_attn = block.unfreeze_cross_attention()
+            if has_cross_attn: unfrozen_cnt += 1
+        print('[DEBUG] unfrozen_cross_attention_blocks:', unfrozen_cnt)
 
 
 class TransformerFiLMDecoderInterleaved(nn.Module):

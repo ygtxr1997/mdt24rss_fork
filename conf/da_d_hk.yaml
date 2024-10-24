@@ -19,7 +19,7 @@ slurm: false
 min_window_size: 21
 max_window_size: 50
 future_range: 29
-seed: 37  # ori:242
+seed: 242  # ori:242
 device: 'cuda'
 batch_size: 128  # ori:128
 devices: 4
@@ -48,11 +48,12 @@ trainer:
   max_epochs: ${max_epochs}
   sync_batchnorm: false
   accelerator: auto
-  limit_train_batches: 500
+  limit_train_batches: 300
   limit_val_batches: 4
 
 logger:
   _target_: pytorch_lightning.loggers.WandbLogger
+  offline: false
   save_dir: .
   name: logger
   group: mdt

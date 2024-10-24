@@ -114,9 +114,9 @@ class StyleVectorizer(nn.Module):
 #*********************************************
 
 
-class Discriminator1d(torch.nn.Module):
+class Discriminator1dStyleGAN(torch.nn.Module):
     def __init__(self, in_dim: int, reduce_scale: int, dropout=0.2):
-        super(Discriminator1d, self).__init__()
+        super(Discriminator1dStyleGAN, self).__init__()
         self.style_mlp = StyleVectorizer(in_dim, in_dim // reduce_scale, depth=2, lr_mul=1)
         self.dropout = nn.Dropout(dropout)
         self.logit_out = nn.Linear(in_dim // reduce_scale, 1)
@@ -124,9 +124,92 @@ class Discriminator1d(torch.nn.Module):
         return self.logit_out(self.dropout(self.style_mlp(x)))
 
 
+class Discriminator1d(torch.nn.Module):
+    def __init__(self, in_dim: int, reduce_scale: int, dropout=0.2):
+        super(Discriminator1d, self).__init__()
+        inner_dim = 64
+        self.backbone = nn.Sequential(
+            nn.Conv1d(1, inner_dim, 4, 4, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv1d(inner_dim, inner_dim * 2, 4, 4, 1, bias=False),
+            nn.BatchNorm1d(inner_dim * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv1d(inner_dim * 2, inner_dim * 4, 4, 4, 1, bias=False),
+            nn.BatchNorm1d(inner_dim * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv1d(inner_dim * 4, inner_dim * 8, 4, 4, 1, bias=False),
+            nn.BatchNorm1d(inner_dim * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.logit_out = nn.Linear(inner_dim * 8 * 2, 1, bias=False)
+        self.init_weight()
+
+    def forward(self, x):
+        if x.ndim == 2:  # (B,D)
+            x = x.unsqueeze(1)  # (B,1,D)
+        x = self.backbone(x)  # (B,512,2)
+        x = x.reshape(x.size(0), -1)
+        output = self.logit_out(self.dropout(x))
+        return output
+
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv1d, nn.Linear)):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in')
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+
 class Discriminator2d(torch.nn.Module):
-    def __init__(self, in_dim, reduce_scale, dropout_prob=0.2):
+    def __init__(self, in_dim: int, reduce_scale: int, dropout=0.2):
         super(Discriminator2d, self).__init__()
+        inner_dim = in_dim * reduce_scale
+        self.conv_blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv1d(in_dim, in_dim, 4, 2, 1, bias=False)),
+            nn.Sequential(
+                nn.Mish(inplace=True),
+                nn.Conv1d(in_dim, inner_dim, 4, 2, 1, bias=False)),
+            nn.Sequential(
+                nn.Mish(inplace=True),
+                nn.Conv1d(inner_dim, inner_dim * 2, 4, 2, 1, bias=False)),
+            nn.Sequential(
+                nn.Mish(inplace=True),
+                nn.Conv1d(inner_dim * 2, inner_dim * 2, 3, 1, 1, bias=False)),
+        ])
+        self.norms = nn.ModuleList([
+            nn.GroupNorm(8, in_dim),
+            nn.GroupNorm(8, inner_dim),
+            nn.GroupNorm(8, inner_dim * 2),
+            nn.GroupNorm(8, inner_dim * 2),
+        ])
+        self.dropout = nn.Dropout(dropout)
+        self.logit_out = nn.Linear(inner_dim * 2, 1, bias=False)
+        self.init_weight()
+
+    def forward(self, x):  # x:(B,T,D)
+        x = x.permute(0, 2, 1)  # (B,D,T)
+        for i in range(len(self.conv_blocks)):
+            x = self.conv_blocks[i](x)  # (B,D,T)
+            x = self.norms[i](x)
+        x = x.permute(0, 2, 1)  # (B,T,D)
+        x = x.squeeze(1)
+        return self.logit_out(self.dropout(x))
+
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv1d, nn.Linear)):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in')
+            elif isinstance(m, nn.GroupNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+
+class Discriminator2dSeqGAN(torch.nn.Module):
+    def __init__(self, in_dim, reduce_scale, dropout_prob=0.2):
+        super(Discriminator2dSeqGAN, self).__init__()
         filter_sizes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
         filter_dims = [100, 200, 200, 200, 200, 100, 100, 100, 100, 100]
         assert len(filter_sizes) == len(filter_dims)
@@ -179,9 +262,13 @@ class WGAN_GP(torch.nn.Module):
             assert is_discriminator_batch, "source_feat should be given when is_discriminator_batch=True"
             source_feat = target_feat
         if source_feat.shape[0] > target_feat.shape[0]:
-            source_feat = source_feat[:target_feat.shape[0]]
+            source_feat = source_feat[:target_feat.shape[0]]  # use former features
+            # source_feat = source_feat[-target_feat.shape[0]:]  # use last features
+            print('[Warning] target < source feat')
         elif target_feat.shape[0] > source_feat.shape[0]:
-            target_feat = target_feat[:source_feat.shape[0]]
+            target_feat = target_feat[:source_feat.shape[0]]  # use former features
+            # target_feat = target_feat[-source_feat.shape[0]:]  # use last features
+            print('[Warning] target > source feat')
         bs = source_feat.shape[0]
         # source_feat = source_feat.view(bs, -1)
         # target_feat = target_feat.view(bs, -1)

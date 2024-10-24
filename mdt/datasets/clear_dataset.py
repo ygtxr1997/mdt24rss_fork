@@ -104,6 +104,8 @@ class ClearDataset(Dataset):
         ## Extracted speed-up ##
         use_extracted_rel_actions: bool = False,
         extracted_dir: str = 'extracted/',
+        ## Others ##
+        max_len: int = None,
     ):
         self.observation_space = obs_space
         self.proprio_state = proprio_state
@@ -144,6 +146,9 @@ class ClearDataset(Dataset):
                 self.abs_datasets_dir)
         else:
             self.episode_lookup = self._build_file_indices(self.abs_datasets_dir)
+
+        if max_len is not None:
+            self.episode_lookup = self.episode_lookup[:max_len]
 
         self.naming_pattern, self.n_digits = lookup_naming_pattern(self.abs_datasets_dir, self.save_format)
 

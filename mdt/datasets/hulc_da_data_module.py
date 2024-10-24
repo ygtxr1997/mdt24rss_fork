@@ -184,17 +184,18 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
             if dataset == 'lang_paraphrase-MiniLM-L3-v2':
                 continue
             else:
-                s_train_dataset = hydra.utils.instantiate(
-                    dataset, datasets_dir=self.s_training_dir, transforms=self.s_train_transforms
-                )
-                s_val_dataset = hydra.utils.instantiate(
-                    dataset, datasets_dir=self.s_val_dir, transforms=self.s_val_transforms
-                )
                 t_train_dataset = hydra.utils.instantiate(
                     dataset, datasets_dir=self.t_training_dir, transforms=self.t_train_transforms
                 )
                 t_val_dataset = hydra.utils.instantiate(
                     dataset, datasets_dir=self.t_val_dir, transforms=self.t_val_transforms
+                )
+                s_train_dataset = hydra.utils.instantiate(
+                    dataset, datasets_dir=self.s_training_dir, transforms=self.s_train_transforms,
+                    # max_len=len(t_train_dataset)
+                )
+                s_val_dataset = hydra.utils.instantiate(
+                    dataset, datasets_dir=self.s_val_dir, transforms=self.s_val_transforms
                 )
                 if self.use_shm:
                     s_train_dataset.setup_shm_lookup(train_shm_lookup)
@@ -208,6 +209,8 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
                 self.val_datasets[f"{key}_source"] = s_val_dataset
                 self.val_datasets[f"{key}_target"] = t_val_dataset  # to avoid 1 thread accessing 2 different dirs
                 self.modalities.append(key)  # "lang", "vis"
+                print(f'[DEBUG] HulcDomainAdaptDataModule: train_{key}_s_len={len(s_train_dataset)}, '
+                      f'train_{key}_t_len={len(t_train_dataset)}')
         print(f'[DEBUG] HulcDomainAdaptDataModule setup finished. '
               f'train.keys:{self.train_datasets.keys()}, '
               f'val.keys:{self.val_datasets.keys()}.')
@@ -220,6 +223,7 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
                 num_workers=dataset.num_workers,
                 pin_memory=True,
                 shuffle=True,
+                drop_last=False,
             )
             for key, dataset in self.train_datasets.items()
         }, "max_size_cycle")

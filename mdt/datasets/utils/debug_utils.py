@@ -13,6 +13,7 @@ class TSNEHelper:
         print(f'Running T-SNE fit for ({features.shape})... (default: first half is target; second half is source)')
         self.tsne.fit_transform(self.features)
         self.embedding = self.tsne.embedding_
+        self.kl_dist = self.tsne.kl_divergence_
         print('T-SNE embedding shape:', self.embedding.shape)  # (12000, 2)
 
     def plot_tsne(self, fn='tmp1'):
@@ -26,6 +27,7 @@ class TSNEHelper:
         tsne_result_df = pd.DataFrame({'tsne_1': tsne_result[:, 0], 'tsne_2': tsne_result[:, 1], 'label': y_text})
         sns.scatterplot(x='tsne_1', y='tsne_2', hue='label', data=tsne_result_df, ax=ax, s=3, alpha=0.5)
         lim = (tsne_result.min() - 5, tsne_result.max() + 5)
+        ax.set_title(f"KL divergence: {self.kl_dist}")
         ax.set_xlim(lim)
         ax.set_ylim(lim)
         ax.set_aspect('equal')

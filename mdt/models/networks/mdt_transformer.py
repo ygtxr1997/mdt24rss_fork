@@ -91,6 +91,7 @@ class MDTTransformer(nn.Module):
         self.latent_encoder_emb = None
         self.cache_action_emb = None
         self.cache_action_output = None
+        self.cache_ca_output = None
 
         if use_mlp_goal:
             self.goal_emb = nn.Sequential(
@@ -194,7 +195,7 @@ class MDTTransformer(nn.Module):
     def freeze_backbone(self):
         for name, param in self.named_parameters():
             param.requires_grad = False
-        self.decoder.unfreeze_final_layers()
+        self.decoder.unfreeze_cross_attention()
 
     def trainable_params(self):
         return filter(lambda p: p.requires_grad, self.parameters())
@@ -258,6 +259,7 @@ class MDTTransformer(nn.Module):
         else:
             x = self.decoder(action_x, context)
         self.cache_action_emb = x
+        self.cache_ca_output = self.decoder.cache_ca_out
 
         pred_actions = self.action_pred(x)
         self.cache_action_output = pred_actions

@@ -32,25 +32,33 @@ optimizer:
   _target_: torch.optim.AdamW
   transformer_weight_decay: 0.01
   obs_encoder_weight_decay: 0.01
-  learning_rate: 1e-5
+  vis1_lr: 1e-6
+  vis2_lr: 1e-5
+  act_lr: 5e-7
   betas: [0.9,0.99]
-  da_lr: 1e-5
-  da_betas: [0.9, 0.99]
 
 lr_scheduler:
-  enc_lr_scheduler:
+  vis1_lr_scheduler:  # static
+    lr_scheduler:
+      init_lr: 1e-6  # will be recovered
+      init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
+      final_lr_scale: 1e-3  # This is the ratio of final learning rate to peak learning rate
+      total_steps: 20000  # Example total steps, adjust as needed
+      phase_ratio: "(0.02, 0.15, 0.9)"
+      lr: 1e-6  # This is the peak or maximum learning rate
+  vis2_lr_scheduler:  # gripper
     lr_scheduler:
       init_lr: 1e-5  # will be recovered
-      init_lr_scale: 0.2  # This is the ratio of initial learning rate to peak learning rate
+      init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
       final_lr_scale: 1e-3  # This is the ratio of final learning rate to peak learning rate
-      total_steps: 3000  # Example total steps, adjust as needed
-      phase_ratio: "(0.03, 0.16, 0.9)"
+      total_steps: 20000  # Example total steps, adjust as needed
+      phase_ratio: "(0.02, 0.1, 0.9)"
       lr: 1e-5  # This is the peak or maximum learning rate
-  da_lr_scheduler:
+  act_lr_scheduler:
     lr_scheduler:
-      init_lr: 1e-5  # will be recovered
-      init_lr_scale: 0.2  # This is the ratio of initial learning rate to peak learning rate
+      init_lr: 1e-7  # will be recovered
+      init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
       final_lr_scale: 1e-3  # This is the ratio of final learning rate to peak learning rate
-      total_steps: 3000  # Example total steps, adjust as needed
-      phase_ratio: "(0.03, 0.16, 0.9)"
-      lr: 1e-5  # This is the peak or maximum learning rate
+      total_steps: 20000  # Example total steps, adjust as needed
+      phase_ratio: "(0.02, 0.1, 0.9)"
+      lr: 1e-7    # This is the peak or maximum learning rate
