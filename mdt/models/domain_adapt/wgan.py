@@ -165,13 +165,13 @@ class Discriminator1d(torch.nn.Module):
 class Discriminator2d(torch.nn.Module):
     def __init__(self, in_dim: int, reduce_scale: int, dropout=0.2):
         super(Discriminator2d, self).__init__()
-        inner_dim = in_dim * reduce_scale
+        inner_dim = in_dim // reduce_scale
         self.conv_blocks = nn.ModuleList([
             nn.Sequential(
-                nn.Conv1d(in_dim, in_dim, 4, 2, 1, bias=False)),
+                nn.Conv1d(in_dim, inner_dim, 4, 2, 1, bias=False)),
             nn.Sequential(
                 nn.Mish(inplace=True),
-                nn.Conv1d(in_dim, inner_dim, 4, 2, 1, bias=False)),
+                nn.Conv1d(inner_dim, inner_dim, 4, 2, 1, bias=False)),
             nn.Sequential(
                 nn.Mish(inplace=True),
                 nn.Conv1d(inner_dim, inner_dim * 2, 4, 2, 1, bias=False)),
@@ -180,10 +180,10 @@ class Discriminator2d(torch.nn.Module):
                 nn.Conv1d(inner_dim * 2, inner_dim * 2, 3, 1, 1, bias=False)),
         ])
         self.norms = nn.ModuleList([
-            nn.GroupNorm(8, in_dim),
-            nn.GroupNorm(8, inner_dim),
-            nn.GroupNorm(8, inner_dim * 2),
-            nn.GroupNorm(8, inner_dim * 2),
+            nn.BatchNorm1d(inner_dim),
+            nn.BatchNorm1d(inner_dim),
+            nn.BatchNorm1d(inner_dim * 2),
+            nn.BatchNorm1d(inner_dim * 2),
         ])
         self.dropout = nn.Dropout(dropout)
         self.logit_out = nn.Linear(inner_dim * 2, 1, bias=False)
@@ -202,7 +202,7 @@ class Discriminator2d(torch.nn.Module):
         for m in self.modules():
             if isinstance(m, (nn.Conv1d, nn.Linear)):
                 nn.init.kaiming_normal_(m.weight, mode='fan_in')
-            elif isinstance(m, nn.GroupNorm):
+            elif isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 

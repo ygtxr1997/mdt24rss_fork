@@ -56,9 +56,9 @@ lr_scheduler:
       lr: 1e-5  # This is the peak or maximum learning rate
   act_lr_scheduler:
     lr_scheduler:
-      init_lr: 1e-7  # will be recovered
+      init_lr: 1e-6  # will be recovered
       init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
       final_lr_scale: 1e-3  # This is the ratio of final learning rate to peak learning rate
       total_steps: 20000  # Example total steps, adjust as needed
       phase_ratio: "(0.02, 0.1, 0.9)"
-      lr: 1e-7    # This is the peak or maximum learning rate
+      lr: 1e-6    # This is the peak or maximum learning rate
