@@ -116,6 +116,9 @@ class Attention(nn.Module):
                 interpolate_factor = rotary_interpolation_factor, 
             )
 
+        self.cache_k_out = None
+        self.cache_v_out = None
+
     def forward(self, x, context=None, custom_attn_mask=None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -135,6 +138,11 @@ class Attention(nn.Module):
         if self.use_rot_embed:
             q = self.rotary_pos_emb.rotate_queries_or_keys(q)
             k = self.rotary_pos_emb.rotate_queries_or_keys(k)
+
+        if context is not None:
+            # TODO: cache k and v for ca
+            self.cache_k_out = k
+            self.cache_v_out = v
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
@@ -289,6 +297,8 @@ class ConditionedBlock(Block):
                          bias=bias)
         self.adaLN_zero = AdaLNZero(film_cond_dim)
         self.cache_ca_out = None
+        self.cache_k_out = None
+        self.cache_v_out = None
 
     def forward(self, x, c, context=None, custom_attn_mask=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_zero(c)
@@ -302,6 +312,8 @@ class ConditionedBlock(Block):
         if self.use_cross_attention and context is not None:
             self.cache_ca_out = x + self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask)
             x = self.cache_ca_out
+            self.cache_k_out = self.cross_att.cache_k_out
+            self.cache_v_out = self.cross_att.cache_v_out
         
         # MLP with modulation
         x_mlp = self.ln_2(x)
@@ -576,13 +588,21 @@ class TransformerFiLMDecoder(nn.Module):
             )
         self.ln = LayerNorm(embed_dim, bias)
         self.cache_ca_out = []
+        self.cache_k_out = []
+        self.cache_v_out = []
 
     def forward(self, x, c, cond=None, custom_attn_mask=None):
         self.cache_ca_out = []
+        self.cache_k_out = []
+        self.cache_v_out = []
         for layer in self.blocks:
             x = layer(x, c, cond, custom_attn_mask=custom_attn_mask)
             if layer.cache_ca_out is not None:
+                assert layer.cache_k_out is not None
+                assert layer.cache_v_out is not None
                 self.cache_ca_out.append(layer.cache_ca_out)
+                self.cache_k_out.append(layer.cache_k_out)
+                self.cache_v_out.append(layer.cache_v_out)
         x = self.ln(x)
         return x
 

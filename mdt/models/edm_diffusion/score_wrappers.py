@@ -50,7 +50,7 @@ class GCDenoiser(nn.Module):
             state: The input state. (perceptual_emb)
             action: The input action, (gt). For DA, it's (rand_noise).
             goal: The input goal. (gt latent)
-            noise: The input noise.
+            noise: The input noise, (epsilon). For DA, it should not be used.
             sigma: The input sigma. (DDPM process)
             **kwargs: Additional keyword arguments.
         Returns:
@@ -60,10 +60,10 @@ class GCDenoiser(nn.Module):
         if not is_da:
             noised_input = action + noise * append_dims(sigma, action.ndim)  # add noise
         else:
-            noised_input = action
+            noised_input = action * append_dims(sigma, action.ndim)  # mean=0, std=sigma_t
         model_output = self.inner_model(state, noised_input * c_in, goal, sigma, **kwargs)
         target = (action - c_skip * noised_input) / c_out
-        return (model_output - target).pow(2).flatten(1).mean(), model_output
+        return (model_output - target).pow(2).flatten(1).mean(), model_output * c_out + noised_input * c_skip
 
     def forward(self, state, action, goal, sigma, **kwargs):
         """

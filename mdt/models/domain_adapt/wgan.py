@@ -125,9 +125,8 @@ class Discriminator1dStyleGAN(torch.nn.Module):
 
 
 class Discriminator1d(torch.nn.Module):
-    def __init__(self, in_dim: int, reduce_scale: int, dropout=0.2):
+    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2):
         super(Discriminator1d, self).__init__()
-        inner_dim = 64
         self.backbone = nn.Sequential(
             nn.Conv1d(1, inner_dim, 4, 4, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
@@ -142,7 +141,7 @@ class Discriminator1d(torch.nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
         )
         self.dropout = nn.Dropout(dropout)
-        self.logit_out = nn.Linear(inner_dim * 8 * 2, 1, bias=False)
+        self.logit_out = nn.Linear(inner_dim * 8 * (in_dim // 256), 1, bias=False)
         self.init_weight()
 
     def forward(self, x):
@@ -163,9 +162,8 @@ class Discriminator1d(torch.nn.Module):
 
 
 class Discriminator2d(torch.nn.Module):
-    def __init__(self, in_dim: int, reduce_scale: int, dropout=0.2):
+    def __init__(self, in_dim: int, inner_dim: int, dropout=0.2):
         super(Discriminator2d, self).__init__()
-        inner_dim = in_dim // reduce_scale
         self.conv_blocks = nn.ModuleList([
             nn.Sequential(
                 nn.Conv1d(in_dim, inner_dim, 4, 2, 1, bias=False)),
@@ -243,52 +241,81 @@ class Discriminator2dSeqGAN(torch.nn.Module):
 
 from torch.autograd import grad
 class WGAN_GP(torch.nn.Module):
-    def __init__(self, in_dim: int = 3 * 512, reduce_scale = 2,
-                 gamma: float = 10, ndims: int = 2,
+    def __init__(self,
+                 in_dim: int = 3 * 512,
+                 inner_dim: int = 64,
+                 ndims: int = 2,
+                 gamma: float = 10,
+                 num_layers: int = 1,
                  ):
         super(WGAN_GP, self).__init__()
-        if ndims == 2:  # (B,D)
-            self.discriminator = Discriminator1d(in_dim, reduce_scale)
-        elif ndims == 3:  # (B,T,D)
-            self.discriminator = Discriminator2d(in_dim, reduce_scale)
+        self.num_layers = num_layers
+
+        discriminators = []
+        for l in range(self.num_layers):
+            d_net = self.get_discriminators(ndims, in_dim=in_dim, inner_dim=inner_dim)
+            discriminators.append(d_net)
+        self.discriminators = nn.ModuleList(discriminators)
+
         self.gamma = gamma
         self.wd_clf = 1
 
-        self.cache_wdist = 0.
-        self.cache_gp = 0.
+        self.cache_wdists = [0. for _ in range(self.num_layers)]
+        self.cache_gps = [0. for _ in range(self.num_layers)]
 
-    def forward(self, target_feat, source_feat=None, is_discriminator_batch: bool = True, gt_labels=None,):
-        if source_feat is None:
-            assert is_discriminator_batch, "source_feat should be given when is_discriminator_batch=True"
-            source_feat = target_feat
-        if source_feat.shape[0] > target_feat.shape[0]:
-            source_feat = source_feat[:target_feat.shape[0]]  # use former features
-            # source_feat = source_feat[-target_feat.shape[0]:]  # use last features
-            print('[Warning] target < source feat')
-        elif target_feat.shape[0] > source_feat.shape[0]:
-            target_feat = target_feat[:source_feat.shape[0]]  # use former features
-            # target_feat = target_feat[-source_feat.shape[0]:]  # use last features
-            print('[Warning] target > source feat')
-        bs = source_feat.shape[0]
-        # source_feat = source_feat.view(bs, -1)
-        # target_feat = target_feat.view(bs, -1)
-        device = source_feat.device
-
-        if is_discriminator_batch:
-            self.cache_gp = gp = self.gradient_penalty(self.discriminator, source_feat, target_feat, device)
-            d_source = self.discriminator(source_feat)
-            d_target = self.discriminator(target_feat)
-            self.cache_wdist = wasserstein_distance = d_source.mean() - d_target.mean()
-            critic_cost = -wasserstein_distance + self.gamma * gp
-            loss = critic_cost
+    @staticmethod
+    def get_discriminators(ndims: int, **kwargs):
+        if ndims == 2:  # (B,D)
+            return Discriminator1d(**kwargs)
+        elif ndims == 3:  # (B,T,D)
+            return Discriminator2d(**kwargs)
         else:
-            d_target = self.discriminator(target_feat)  # large:real
-            d_target_neg_logit = -d_target.mean()
-            loss = self.wd_clf * d_target_neg_logit
+            raise NotImplementedError(f"{ndims} not supported!")
+
+    def forward(self, target_feats, source_feats=None, is_discriminator_batch: bool = True):
+        if source_feats is None:
+            assert not is_discriminator_batch, "source_feat should be given when is_discriminator_batch=True"
+            source_feats = target_feats
+
+        assert len(target_feats) == len(source_feats) == self.num_layers
+
+        loss = 0.
+        for l in range(self.num_layers):
+            layer_discriminator = self.discriminators[l]
+            target_feat = target_feats[l]
+            source_feat = source_feats[l]
+
+            # Check shape
+            if source_feat.shape[0] > target_feat.shape[0]:
+                # source_feat = source_feat[:target_feat.shape[0]]  # use former features
+                source_feat = source_feat[-target_feat.shape[0]:]  # use last features
+                print('[Warning] target < source feat')
+            elif target_feat.shape[0] > source_feat.shape[0]:
+                # target_feat = target_feat[:source_feat.shape[0]]  # use former features
+                target_feat = target_feat[-source_feat.shape[0]:]  # use last features
+                print('[Warning] target > source feat')
+
+            bs = source_feat.shape[0]
+            device = source_feat.device
+
+            if is_discriminator_batch:
+                self.cache_gps[l] = gp = self.gradient_penalty(layer_discriminator, source_feat, target_feat, device)
+                d_source = layer_discriminator(source_feat.detach())            # avoid grad of G_source
+                d_target = layer_discriminator(target_feat.clone().detach())    # avoid grad of G_target
+                self.cache_wdists[l] = wasserstein_distance = d_source.mean() - d_target.mean()
+                critic_cost = -wasserstein_distance + self.gamma * gp
+                loss += critic_cost
+            else:
+                d_target = layer_discriminator(target_feat)  # larger:more real
+                d_target_neg_logit = -d_target.mean()
+                loss += self.wd_clf * d_target_neg_logit
+
+        loss = loss / self.num_layers
+
         return {
             'loss': loss,
-            'w_dist': self.cache_wdist,
-            'gp': self.cache_gp,
+            'w_dist': sum(self.cache_wdists) / self.num_layers,
+            'gp': sum(self.cache_gps) / self.num_layers,
         }
 
     def gradient_penalty(self, critic, h_s, h_t, device):
