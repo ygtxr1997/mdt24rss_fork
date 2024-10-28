@@ -507,8 +507,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_vs_dict: Dict[str, List[torch.Tensor]] = {}
         t_vs_dict: Dict[str, List[torch.Tensor]] = {}
 
-        rand_noise = None
+        source_act_0 = None
+        common_noise = None
         common_sigmas = None
+        common_sigma_emb = None
         max_bs = None
         for self.modality_scope, dataset_batch in batch.items():  # order:lang_source,lang_target,vis_source,vis_target
             # if 'lang' in self.modality_scope:  # TODO: skip:'lang_source', 'lang_target'
@@ -534,18 +536,20 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 s_batch_len += 1
 
                 # Compute diffusion loss without actions, just for sigmas
-                rand_noise = dataset_batch['actions']
+                source_act_0 = dataset_batch['actions']
                 _, sigmas, noise, pred_a0 = self.diffusion_loss(
                     s_perceptual_emb,
                     latent_goal,  # (64,512)
-                    rand_noise,  # no need to calculate loss
+                    source_act_0,  # no need to calculate loss
                     is_target=False,
                     sigmas=common_sigmas,
                     is_da=False,
                 )  # will call enc_only_forward() and dec_only_forward()
+                common_noise = noise
                 common_sigmas = sigmas if common_sigmas is None else common_sigmas  # TODO: S and T use the same sigmas
                 latent_encoder_emb = self.source_model.inner_model.latent_encoder_emb
                 latent_action_emb = self.source_model.inner_model.cache_action_emb
+                common_sigma_emb = self.source_model.inner_model.cache_sigma_emb
                 action_output = pred_a0
                 ca_output = self.source_model.inner_model.cache_ca_output  # [B,10,512]*6
                 k_output = self.source_model.inner_model.cache_k_output
@@ -579,14 +583,15 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
 
                 # Compute diffusion loss without actions, just for sigmas
                 # rand_noise = torch.randn_like(dataset_batch["actions"])  # TODO: re-rand
-                assert rand_noise is not None
+                assert source_act_0 is not None
                 _, sigmas, noise, pred_a0 = self.diffusion_loss(
                     t_perceptual_emb,
                     latent_goal,
-                    dataset_batch['actions'],  # TODO: no need to calculate loss, ori:rand_noise
+                    source_act_0,  # TODO: no need to calculate loss, ori:rand_noise
                     is_target=True,
                     sigmas=common_sigmas,
                     is_da=False,
+                    noise=common_noise,
                 )
                 latent_encoder_emb = self.model.inner_model.latent_encoder_emb
                 latent_action_emb = self.model.inner_model.cache_action_emb
@@ -732,7 +737,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             self.cache_s_v.append(s_vs_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
 
         from mdt.datasets.utils.debug_utils import TSNEHelper
-        if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 400 == 100 and
+        if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 400 == -1 and
                 len(self.cache_t_emb) >= 20 and len(self.cache_s_emb) >= 20):
             epoch_idx = self.current_epoch
 
@@ -792,8 +797,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
 
         if self.use_da_vis1:
             da_loss_dict = self.da_vis1_loss.forward(
-                [t_feat_for_da_vis1],  # avoid grad of G_target
-                [s_feat_for_da_vis1],  # avoid grad of G_source
+                [t_feat_for_da_vis1.clone().detach()],  # avoid grad of G_target
+                [s_feat_for_da_vis1.detach()],  # avoid grad of G_source
                 is_discriminator_batch=True,
             )
             da_d_1_loss = da_loss_dict['loss']
@@ -804,14 +809,14 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             losses['gp_1'] += gp
 
             d_vis1_opt.zero_grad()
-            self.manual_backward(losses['da_d1_loss'], retain_graph=True)  # no need to retrain graph
+            self.manual_backward(losses['da_d1_loss'], retain_graph=False)  # no need to retrain graph
             d_vis1_opt.step()
             d_vis1_sch.step()
 
         if self.use_da_vis2:
             da_2_loss_dict = self.da_vis2_loss.forward(
-                [t_feat_for_da_vis2],  # avoid grad of G_target
-                [s_feat_for_da_vis2],  # avoid grad of G_source
+                [t_feat_for_da_vis2.clone().detach()],  # avoid grad of G_target
+                [s_feat_for_da_vis2.detach()],  # avoid grad of G_source
                 is_discriminator_batch=True,
             )
             da_d_2_loss = da_2_loss_dict['loss']
@@ -822,15 +827,16 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             losses['gp_2'] += gp
 
             d_vis2_opt.zero_grad()
-            self.manual_backward(losses['da_d2_loss'], retain_graph=True)  # no need to retrain graph
+            self.manual_backward(losses['da_d2_loss'], retain_graph=False)  # no need to retrain graph
             d_vis2_opt.step()
             d_vis2_sch.step()
 
         if self.use_da_act:
             da_act_loss_dict = self.da_act_loss.forward(
-                t_feat_for_da_act,  # avoid grad of G_target
-                s_feat_for_da_act,  # avoid grad of G_source
+                [x.clone().detach() for x in t_feat_for_da_act],  # avoid grad of G_target
+                [x.clone().detach() for x in s_feat_for_da_act],  # avoid grad of G_source
                 is_discriminator_batch=True,
+                sigmas=common_sigma_emb,
             )
             da_d_act_loss = da_act_loss_dict['loss']
             w_dist = da_act_loss_dict['w_dist']
@@ -840,7 +846,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             losses['gp_act'] += gp
 
             d_act_opt.zero_grad()
-            self.manual_backward(losses['da_d_act_loss'], retain_graph=True)  # no need to retrain graph
+            self.manual_backward(losses['da_d_act_loss'], retain_graph=False)  # no need to retrain graph
             d_act_opt.step()
             d_act_sch.step()
 
@@ -855,6 +861,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 t_feat_for_da_act,  # update G_target
                 s_feat_for_da_act,  # avoid grad of G_source
                 is_discriminator_batch=False,
+                sigmas=common_sigma_emb,
             )
             da_g_act_loss = da_act_loss_dict['loss']
             gp = da_act_loss_dict['gp']  # just for log
@@ -1139,6 +1146,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             is_target: bool = True,
             is_da: bool = True,
             sigmas: torch.Tensor = None,
+            noise: torch.Tensor = None,
     ):
         """
         Computes the score matching loss given the perceptual embedding, latent goal, and desired actions.
@@ -1149,13 +1157,14 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         if not is_target:  # source
             self.source_model.eval()
             sigmas = self.make_sample_density()(shape=(len(actions),), device=self.device).to(self.device) if sigmas is None else sigmas
-            noise = torch.randn_like(actions).to(self.device)
+            noise = torch.randn_like(actions).to(self.device) if noise is None else noise
             loss, pred_a0 = self.source_model.loss(perceptual_emb, actions, latent_goal, noise, sigmas, is_da=is_da)
         else:
             self.model.train()
             # assert sigmas is not None
+            assert noise is not None
             sigmas = self.make_sample_density()(shape=(len(actions),), device=self.device).to(self.device) if sigmas is None else sigmas
-            noise = torch.randn_like(actions).to(self.device)
+            # noise = torch.randn_like(actions).to(self.device)  # TODO: do not re-rand
             loss, pred_a0 = self.model.loss(perceptual_emb, actions, latent_goal, noise, sigmas, is_da=is_da)
         return loss, sigmas, noise, pred_a0
 

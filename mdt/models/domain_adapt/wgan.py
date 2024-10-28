@@ -124,30 +124,91 @@ class Discriminator1dStyleGAN(torch.nn.Module):
         return self.logit_out(self.dropout(self.style_mlp(x)))
 
 
+class AdaLNZero(nn.Module):
+    def __init__(self, hidden_size, in_dim=512):
+        super(AdaLNZero, self).__init__()
+        self.parts = 2
+        self.modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(in_dim, self.parts * hidden_size, bias=True)
+        )
+    def init_weight(self):
+        # Initialize weights and biases to zero
+        weight_shape = list(self.modulation[1].weight.data.shape)
+        weight_shape[0] = weight_shape[0] // self.parts
+        self.modulation[1].weight = torch.nn.Parameter(torch.cat(
+            [torch.zeros(weight_shape),
+             torch.ones(weight_shape),]
+        ))  # shift=0,scale=1,gate=0
+        nn.init.zeros_(self.modulation[1].bias)
+    def forward(self, c):
+        return self.modulation(c).chunk(self.parts, dim=-1)  # shift, scale, gate
+
+
 class Discriminator1d(torch.nn.Module):
-    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2):
+    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False):
         super(Discriminator1d, self).__init__()
-        self.backbone = nn.Sequential(
+        self.stem = nn.Sequential(
             nn.Conv1d(1, inner_dim, 4, 4, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv1d(inner_dim, inner_dim * 2, 4, 4, 1, bias=False),
-            nn.BatchNorm1d(inner_dim * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(inner_dim * 2, inner_dim * 4, 4, 4, 1, bias=False),
-            nn.BatchNorm1d(inner_dim * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(inner_dim * 4, inner_dim * 8, 4, 4, 1, bias=False),
-            nn.BatchNorm1d(inner_dim * 8),
-            nn.LeakyReLU(0.2, inplace=True),
         )
+        self.convs = nn.ModuleList([
+            nn.Sequential(
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv1d(inner_dim * 2, inner_dim * 4, 4, 4, 1, bias=False),
+            ),
+            nn.Sequential(
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv1d(inner_dim * 4, inner_dim * 8, 4, 4, 1, bias=False),
+            ),
+            nn.Sequential(
+                nn.LeakyReLU(0.2, inplace=True),
+            ),
+        ])
+        self.norms = nn.ModuleList([
+            nn.BatchNorm1d(inner_dim * 2),
+            nn.BatchNorm1d(inner_dim * 4),
+            nn.BatchNorm1d(inner_dim * 8),
+        ])
+        # self.backbone = nn.Sequential(
+        #     nn.Conv1d(1, inner_dim, 4, 4, 1, bias=False),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Conv1d(inner_dim, inner_dim * 2, 4, 4, 1, bias=False),
+        #     nn.BatchNorm1d(inner_dim * 2),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Conv1d(inner_dim * 2, inner_dim * 4, 4, 4, 1, bias=False),
+        #     nn.BatchNorm1d(inner_dim * 4),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        #     nn.Conv1d(inner_dim * 4, inner_dim * 8, 4, 4, 1, bias=False),
+        #     nn.BatchNorm1d(inner_dim * 8),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        # )
         self.dropout = nn.Dropout(dropout)
         self.logit_out = nn.Linear(inner_dim * 8 * (in_dim // 256), 1, bias=False)
+
+        self.use_ada = use_ada
+        if use_ada:
+            self.cond_mapping = nn.ModuleList([
+                AdaLNZero(inner_dim * 2),
+                AdaLNZero(inner_dim * 4),
+                AdaLNZero(inner_dim * 8),
+            ])
+
         self.init_weight()
 
-    def forward(self, x):
+    def forward(self, x, sigmas=None):  # x:(B,D), s:(B,10)
         if x.ndim == 2:  # (B,D)
             x = x.unsqueeze(1)  # (B,1,D)
-        x = self.backbone(x)  # (B,512,2)
+        x = self.stem(x)
+
+        for i in range(len(self.convs)):
+            x = self.norms[i](x)
+            if sigmas is not None:
+                c_shift, c_scale = self.cond_mapping[i](sigmas)  # sigma:(B,emb_dim)
+                x = c_shift.unsqueeze(-1) + x * c_scale.unsqueeze(-1)
+            x = self.convs[i](x)
+
         x = x.reshape(x.size(0), -1)
         output = self.logit_out(self.dropout(x))
         return output
@@ -159,10 +220,13 @@ class Discriminator1d(torch.nn.Module):
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+        if self.use_ada:
+            for ada in self.cond_mapping:
+                ada.init_weight()
 
 
 class Discriminator2d(torch.nn.Module):
-    def __init__(self, in_dim: int, inner_dim: int, dropout=0.2):
+    def __init__(self, in_dim: int, inner_dim: int, dropout=0.2, use_ada=False):
         super(Discriminator2d, self).__init__()
         self.conv_blocks = nn.ModuleList([
             nn.Sequential(
@@ -187,7 +251,7 @@ class Discriminator2d(torch.nn.Module):
         self.logit_out = nn.Linear(inner_dim * 2, 1, bias=False)
         self.init_weight()
 
-    def forward(self, x):  # x:(B,T,D)
+    def forward(self, x, sigmas=None):  # x:(B,T,D), s:(B,10)
         x = x.permute(0, 2, 1)  # (B,D,T)
         for i in range(len(self.conv_blocks)):
             x = self.conv_blocks[i](x)  # (B,D,T)
@@ -247,13 +311,14 @@ class WGAN_GP(torch.nn.Module):
                  ndims: int = 2,
                  gamma: float = 10,
                  num_layers: int = 1,
+                 use_ada: bool = False,
                  ):
         super(WGAN_GP, self).__init__()
         self.num_layers = num_layers
 
         discriminators = []
         for l in range(self.num_layers):
-            d_net = self.get_discriminators(ndims, in_dim=in_dim, inner_dim=inner_dim)
+            d_net = self.get_discriminators(ndims, in_dim=in_dim, inner_dim=inner_dim, use_ada=use_ada)
             discriminators.append(d_net)
         self.discriminators = nn.ModuleList(discriminators)
 
@@ -272,7 +337,8 @@ class WGAN_GP(torch.nn.Module):
         else:
             raise NotImplementedError(f"{ndims} not supported!")
 
-    def forward(self, target_feats, source_feats=None, is_discriminator_batch: bool = True):
+    def forward(self, target_feats, source_feats=None, is_discriminator_batch: bool = True,
+                sigmas: torch.Tensor = None):
         if source_feats is None:
             assert not is_discriminator_batch, "source_feat should be given when is_discriminator_batch=True"
             source_feats = target_feats
@@ -300,13 +366,13 @@ class WGAN_GP(torch.nn.Module):
 
             if is_discriminator_batch:
                 self.cache_gps[l] = gp = self.gradient_penalty(layer_discriminator, source_feat, target_feat, device)
-                d_source = layer_discriminator(source_feat.detach())            # avoid grad of G_source
-                d_target = layer_discriminator(target_feat.clone().detach())    # avoid grad of G_target
+                d_source = layer_discriminator(source_feat.detach(), sigmas)            # avoid grad of G_source
+                d_target = layer_discriminator(target_feat.clone().detach(), sigmas)    # avoid grad of G_target
                 self.cache_wdists[l] = wasserstein_distance = d_source.mean() - d_target.mean()
                 critic_cost = -wasserstein_distance + self.gamma * gp
                 loss += critic_cost
             else:
-                d_target = layer_discriminator(target_feat)  # larger:more real
+                d_target = layer_discriminator(target_feat, sigmas)  # larger:more real
                 d_target_neg_logit = -d_target.mean()
                 loss += self.wd_clf * d_target_neg_logit
 

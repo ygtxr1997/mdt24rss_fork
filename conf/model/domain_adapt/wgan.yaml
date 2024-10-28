@@ -16,6 +16,7 @@ action_da:
   ndims: 2
   gamma: 1
   num_layers: 12  # v:6 layers, k:6 layers
+  use_ada: true
 
 use_da_visual: 'false'  # static,gripper,both,false
 use_da_act: true

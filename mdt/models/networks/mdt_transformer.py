@@ -89,6 +89,8 @@ class MDTTransformer(nn.Module):
         self.action_dim = action_dim
         self.embed_dim = embed_dim
         self.latent_encoder_emb = None
+
+        self.cache_sigma_emb = None
         self.cache_action_emb = None
         self.cache_action_output = None
         self.cache_ca_output = None
