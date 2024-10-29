@@ -73,6 +73,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             use_text_not_embedding: bool = False,
             ckpt_path=None,
             seed: int = 42,
+            debug_diff_loss: bool = False,
     ):
         super(MDTDomainAdaptVisualEncoder, self).__init__()
         self.automatic_optimization = False  # manually backward
@@ -168,6 +169,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.cache_t_k = []
         self.cache_s_v = []
         self.cache_t_v = []
+        self.cache_s_q = []
+        self.cache_t_q = []
+        # For debug
+        self.debug_diff_loss = debug_diff_loss
 
     def load_pretrained_parameters(self, ckpt_path):
         """
@@ -259,7 +264,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.model, False)
         if self.use_da_act:
             self.set_requires_grad(self.model, True)
-            self.model.inner_model.freeze_backbone()
+            if not self.debug_diff_loss:  # when debug diff loss, finetuning all params of diffusion policy
+                self.model.inner_model.freeze_backbone()
             g_act_optim_groups.extend([
                 {"params": self.model.inner_model.trainable_params(), "lr": self.optimizer_config.act_lr},
                 # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
@@ -506,6 +512,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         t_ks_dict: Dict[str, List[torch.Tensor]] = {}
         s_vs_dict: Dict[str, List[torch.Tensor]] = {}
         t_vs_dict: Dict[str, List[torch.Tensor]] = {}
+        s_qs_dict: Dict[str, List[torch.Tensor]] = {}
+        t_qs_dict: Dict[str, List[torch.Tensor]] = {}
 
         source_act_0 = None
         common_noise = None
@@ -554,6 +562,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 ca_output = self.source_model.inner_model.cache_ca_output  # [B,10,512]*6
                 k_output = self.source_model.inner_model.cache_k_output
                 v_output = self.source_model.inner_model.cache_v_output
+                q_output = self.source_model.inner_model.cache_q_output  # [B,8,10,64]*6
                 # self.source_model.inner_model.enc_only_forward(
                 #     s_perceptual_emb,
                 #     actions=None,
@@ -575,6 +584,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 s_ca_dict[save_key] = ca_output[0]  # [B,10,512]*6
                 s_ks_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in k_output]  # (B,8,3,64)->(B,1536)
                 s_vs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in v_output]
+                s_qs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in q_output]
 
             elif 'target' in self.modality_scope:
                 t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
@@ -582,7 +592,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 t_batch_len += 1
 
                 # Compute diffusion loss without actions, just for sigmas
-                # rand_noise = torch.randn_like(dataset_batch["actions"])  # TODO: re-rand
+                rand_noise = torch.randn_like(common_noise)  # TODO: re-rand
                 assert source_act_0 is not None
                 _, sigmas, noise, pred_a0 = self.diffusion_loss(
                     t_perceptual_emb,
@@ -591,7 +601,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                     is_target=True,
                     sigmas=common_sigmas,
                     is_da=False,
-                    noise=common_noise,
+                    noise=rand_noise,
                 )
                 latent_encoder_emb = self.model.inner_model.latent_encoder_emb
                 latent_action_emb = self.model.inner_model.cache_action_emb
@@ -599,6 +609,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 ca_output = self.model.inner_model.cache_ca_output  # [B,10,512]*6
                 k_output = self.model.inner_model.cache_k_output
                 v_output = self.model.inner_model.cache_v_output
+                q_output = self.model.inner_model.cache_q_output
                 # self.model.inner_model.enc_only_forward(
                 #     t_perceptual_emb,
                 #     actions=None,
@@ -607,15 +618,16 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 # )  # encoder doesn't use actions
                 # latent_encoder_emb = self.model.inner_model.latent_encoder_emb
 
-                # # Compute diffusion loss for DEBUG (DO NOT use in method!)
-                # diff_loss, sigmas, noise, pred_a0 = self.diffusion_loss(
-                #     t_perceptual_emb,
-                #     latent_goal,
-                #     dataset_batch['actions'],
-                #     is_target=True,
-                #     is_da=False,
-                # )
-                # losses['action_loss'] += diff_loss
+                # Compute diffusion loss for DEBUG (DO NOT use in method!)
+                if self.debug_diff_loss:
+                    diff_loss, sigmas, noise, pred_a0 = self.diffusion_loss(
+                        t_perceptual_emb,
+                        latent_goal,
+                        dataset_batch['actions'],
+                        is_target=True,
+                        is_da=False,
+                    )
+                    losses['action_loss'] += diff_loss
 
                 # # Compute the masked generative foresight loss (only for target)
                 # if not isinstance(self.gen_img, NoEncoder):
@@ -654,6 +666,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 t_ca_dict[save_key] = ca_output[0]  # [B,10,512]*6
                 t_ks_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in k_output]  # (B,8,3,64)->(B,1536)
                 t_vs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in v_output]
+                t_qs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in q_output]  # (B,8,10,64)
 
             else:
                 raise KeyError(f'[MDTDomainAdaptVisualEncoder] batch key:{self.modality_scope} not supported')
@@ -680,6 +693,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_ks_dict = sort_dict(s_ks_dict)
         t_vs_dict = sort_dict(t_vs_dict)
         s_vs_dict = sort_dict(s_vs_dict)
+        t_qs_dict = sort_dict(t_qs_dict)
+        s_qs_dict = sort_dict(s_qs_dict)
         t_pred_a0_dict = sort_dict(t_pred_a0_dict)
         s_pred_a0_dict = sort_dict(s_pred_a0_dict)
 
@@ -696,12 +711,16 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_k_for_da_act: List[torch.Tensor] = []
         t_v_for_da_act: List[torch.Tensor] = []  # 6*[(B,1536)]
         s_v_for_da_act: List[torch.Tensor] = []  # 6*[(B,1536)]
+        t_q_for_da_act: List[torch.Tensor] = []
+        s_q_for_da_act: List[torch.Tensor] = []
         num_layers = len(list(t_ks_dict.values())[0])
         for l_idx in range(num_layers):
             t_k_for_da_act.append(torch.cat([fs[l_idx] for fs in t_ks_dict.values()], dim=0))
             s_k_for_da_act.append(torch.cat([fs[l_idx] for fs in s_ks_dict.values()], dim=0))
             t_v_for_da_act.append(torch.cat([fs[l_idx] for fs in t_vs_dict.values()], dim=0))
             s_v_for_da_act.append(torch.cat([fs[l_idx] for fs in s_vs_dict.values()], dim=0))
+            t_q_for_da_act.append(torch.cat([fs[l_idx] for fs in t_qs_dict.values()], dim=0))
+            s_q_for_da_act.append(torch.cat([fs[l_idx] for fs in s_qs_dict.values()], dim=0))
 
         t_feat_for_da_act = t_v_for_da_act + t_k_for_da_act
         s_feat_for_da_act = s_v_for_da_act + s_k_for_da_act
@@ -735,9 +754,11 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             self.cache_s_k.append(s_ks_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
             self.cache_t_v.append(t_vs_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
             self.cache_s_v.append(s_vs_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_q.append(t_qs_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_q.append(s_qs_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
 
         from mdt.datasets.utils.debug_utils import TSNEHelper
-        if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 400 == -1 and
+        if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 200 == 0 and
                 len(self.cache_t_emb) >= 20 and len(self.cache_s_emb) >= 20):
             epoch_idx = self.current_epoch
 
@@ -760,6 +781,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             tsne_inputs = np.concatenate(self.cache_t_v + self.cache_s_v, axis=0)
             helper = TSNEHelper(tsne_inputs)
             helper.plot_tsne(f'ca_v_{epoch_idx:02d}_{batch_idx:05d}')
+
+            tsne_inputs = np.concatenate(self.cache_t_q + self.cache_s_q, axis=0)
+            helper = TSNEHelper(tsne_inputs)
+            helper.plot_tsne(f'ca_q_{epoch_idx:02d}_{batch_idx:05d}')
 
             # tsne_inputs = np.concatenate(self.cache_t_pred_a0 + self.cache_s_pred_a0, axis=0)
             # helper = TSNEHelper(tsne_inputs)
@@ -792,6 +817,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             self.cache_s_k = []
             self.cache_t_v = []
             self.cache_s_v = []
+            self.cache_t_q = []
+            self.cache_s_q = []
             self.cache_t_emb = []
             self.cache_s_emb = []
 
@@ -869,9 +896,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
 
             g_act_opt.zero_grad()
             retain_graph = self.use_da_vis1 or self.use_da_vis2  # Keep backward graph for later modules
-            self.manual_backward(losses['da_g_act_loss'], retain_graph=retain_graph)
-            # if self.current_epoch >= 1 or batch_idx > 150:  # Only for debug
-            #     self.manual_backward(backward_loss)
+            if not self.debug_diff_loss:
+                self.manual_backward(losses['da_g_act_loss'], retain_graph=retain_graph)
+            elif self.current_epoch >= 1 or batch_idx > 150:  # Only for debug
+                self.manual_backward(backward_loss)
             g_act_opt.step()
             g_act_sch.step()
 
@@ -1162,9 +1190,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         else:
             self.model.train()
             # assert sigmas is not None
-            assert noise is not None
+            # assert noise is not None
             sigmas = self.make_sample_density()(shape=(len(actions),), device=self.device).to(self.device) if sigmas is None else sigmas
-            # noise = torch.randn_like(actions).to(self.device)  # TODO: do not re-rand
+            noise = torch.randn_like(actions).to(self.device) if noise is None else noise  # TODO: do not re-rand
             loss, pred_a0 = self.model.loss(perceptual_emb, actions, latent_goal, noise, sigmas, is_da=is_da)
         return loss, sigmas, noise, pred_a0
 

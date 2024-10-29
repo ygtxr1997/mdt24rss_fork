@@ -28,6 +28,8 @@ use_text_not_embedding: True
 ckpt_path: ${root_home}/code/mdt24rss_fork/logs/runs/2024-10-03/20-59-31/calvin_abc/2024-10-03_20-59-31/checkpoints/epoch=39-step=40000.ckpt
 seed: ${seed}
 
+debug_diff_loss: true
+
 optimizer:
   _target_: torch.optim.AdamW
   transformer_weight_decay: 0.01

@@ -118,6 +118,7 @@ class Attention(nn.Module):
 
         self.cache_k_out = None
         self.cache_v_out = None
+        self.cache_q_out = None
 
     def forward(self, x, context=None, custom_attn_mask=None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -143,6 +144,7 @@ class Attention(nn.Module):
             # TODO: cache k and v for ca
             self.cache_k_out = k
             self.cache_v_out = v
+            self.cache_q_out = q
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
@@ -299,6 +301,7 @@ class ConditionedBlock(Block):
         self.cache_ca_out = None
         self.cache_k_out = None
         self.cache_v_out = None
+        self.cache_q_out = None
 
     def forward(self, x, c, context=None, custom_attn_mask=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_zero(c)
@@ -314,6 +317,7 @@ class ConditionedBlock(Block):
             x = self.cache_ca_out
             self.cache_k_out = self.cross_att.cache_k_out
             self.cache_v_out = self.cross_att.cache_v_out
+            self.cache_q_out = self.cross_att.cache_q_out
         
         # MLP with modulation
         x_mlp = self.ln_2(x)
@@ -590,11 +594,13 @@ class TransformerFiLMDecoder(nn.Module):
         self.cache_ca_out = []
         self.cache_k_out = []
         self.cache_v_out = []
+        self.cache_q_out = []
 
     def forward(self, x, c, cond=None, custom_attn_mask=None):
         self.cache_ca_out = []
         self.cache_k_out = []
         self.cache_v_out = []
+        self.cache_q_out = []
         for layer in self.blocks:
             x = layer(x, c, cond, custom_attn_mask=custom_attn_mask)
             if layer.cache_ca_out is not None:
@@ -603,6 +609,7 @@ class TransformerFiLMDecoder(nn.Module):
                 self.cache_ca_out.append(layer.cache_ca_out)
                 self.cache_k_out.append(layer.cache_k_out)
                 self.cache_v_out.append(layer.cache_v_out)
+                self.cache_q_out.append(layer.cache_q_out)
         x = self.ln(x)
         return x
 
