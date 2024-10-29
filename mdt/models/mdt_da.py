@@ -143,6 +143,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.use_da_vis1: bool = domain_adapt.use_da_visual in ('both', 'static')
         self.use_da_vis2: bool = domain_adapt.use_da_visual in ('both', 'gripper')
         self.use_da_act: bool = domain_adapt.use_da_act
+        if debug_diff_loss:
+            self.use_da_vis1 = self.use_da_vis2 = False
         if self.use_da_vis1:
             self.da_vis1_loss = hydra.utils.instantiate(domain_adapt.visual_da).to(self.device)
         if self.use_da_vis2:
@@ -726,7 +728,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_feat_for_da_act = s_v_for_da_act + s_k_for_da_act
 
         ''' 1. Update discriminator '''
-        if len(self.cache_t_emb) < 20 and len(self.cache_s_emb) < 20:
+        tsne_batch_nums = 10
+        if len(self.cache_t_emb) < tsne_batch_nums:
             t_keys = list(t_latent_action_emb_dict.keys())
             s_keys = list(s_latent_action_emb_dict.keys())
             t_key = t_keys[-1]
@@ -750,16 +753,16 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             self.cache_s_ca.append([x.detach().float().cpu().reshape(bs, -1).numpy() for x in s_ca_dict[t_key]])
 
             # Only show the 1st layer
-            self.cache_t_k.append(t_ks_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_s_k.append(s_ks_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_t_v.append(t_vs_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_s_v.append(s_vs_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_t_q.append(t_qs_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_s_q.append(s_qs_dict[t_key][0].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_k.append(t_ks_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_k.append(s_ks_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_v.append(t_vs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_v.append(s_vs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_q.append(t_qs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_q.append(s_qs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
 
         from mdt.datasets.utils.debug_utils import TSNEHelper
-        if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 200 == 0 and
-                len(self.cache_t_emb) >= 20 and len(self.cache_s_emb) >= 20):
+        if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 200 == 100 and
+                len(self.cache_t_emb) >= tsne_batch_nums):
             epoch_idx = self.current_epoch
 
             # tsne_inputs = np.concatenate(self.cache_t_vis1 + self.cache_s_vis1, axis=0)  # [(B,D)]*20 + [(B,D)]*20
