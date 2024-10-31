@@ -75,6 +75,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             seed: int = 42,
             debug_diff_loss: bool = False,
             debug_tsne: bool = False,
+            shuffle_target_goal: bool = True,
+            cfg_drop_ratio: float = 0.,
     ):
         super(MDTDomainAdaptVisualEncoder, self).__init__()
         self.automatic_optimization = False  # manually backward
@@ -155,6 +157,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.cache_da_d_loss = 0.
         self.cache_wdist = 0.
         self.cache_da_g_loss = 0.
+        self.shuffle_target_goal = shuffle_target_goal
+        self.cfg_drop_ratio = cfg_drop_ratio
         # For visualization
         self.cache_s_vis1 = []
         self.cache_t_vis1 = []
@@ -427,10 +431,12 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         context = self.model.forward_context_only(perceptual_emb, noised_input, latent_goal, sigmas)
         return context
 
-    @staticmethod
-    def shuffle_tensor(x: torch.Tensor, dim: int = 0):
-        idx = torch.randperm(x.size(dim)).to(x.device)
-        return x.index_select(dim, idx)
+    def shuffle_tensor(self, x: torch.Tensor, dim: int = 0):
+        if self.shuffle_target_goal:
+            idx = torch.randperm(x.size(dim)).to(x.device)
+            return x.index_select(dim, idx)
+        else:
+            return x  # do nothing
 
     def training_step(self, batch: Dict[str, Dict], batch_idx: int,
                       dataloader_idx: int = 0) -> torch.Tensor:  # type: ignore
@@ -533,6 +539,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         common_sigmas = None
         common_sigma_emb = None
         max_bs = None
+        use_zero_goal = np.random.uniform(0, 1) <= self.cfg_drop_ratio
         for self.modality_scope, dataset_batch in batch.items():  # order:lang_source,lang_target,vis_source,vis_target
             # if 'lang' in self.modality_scope:  # TODO: skip:'lang_source', 'lang_target'
             #     continue
@@ -553,12 +560,12 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 # Compute the required embeddings
                 s_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
                     dataset_batch, is_target=False)
+                latent_goal = latent_goal if not use_zero_goal else torch.zeros_like(latent_goal)
                 # 'static' or 'gripper':(bs,1,512)
                 s_batch_len += 1
 
                 # Compute diffusion loss without actions, just for sigmas
                 source_act_0 = dataset_batch['actions']
-                # shuffled_goal = self.shuffle_tensor(latent_goal)  # TODO: setting in config
                 _, sigmas, noise, pred_a0 = self.diffusion_loss(
                     s_perceptual_emb,
                     latent_goal,  # (64,512)
@@ -598,6 +605,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             elif 'target' in self.modality_scope:
                 t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
                     dataset_batch, is_target=True)
+                latent_goal = latent_goal if not use_zero_goal else torch.zeros_like(latent_goal)
                 t_batch_len += 1
 
                 # Compute diffusion loss without actions, just for sigmas

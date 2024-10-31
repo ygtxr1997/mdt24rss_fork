@@ -30,6 +30,8 @@ seed: ${seed}
 
 debug_diff_loss: false
 debug_tsne: false
+shuffle_target_goal: true
+cfg_drop_ratio: 0.2
 
 optimizer:
   _target_: torch.optim.AdamW
@@ -62,6 +64,6 @@ lr_scheduler:
       init_lr: 1e-5  # will be recovered
       init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
       final_lr_scale: 1e-3  # This is the ratio of final learning rate to peak learning rate
-      total_steps: 10000  # Example total steps, adjust as needed
+      total_steps: 20000  # Example total steps, adjust as needed
       phase_ratio: "(0.02, 0.1, 0.9)"
       lr: 1e-5    # This is the peak or maximum learning rate
