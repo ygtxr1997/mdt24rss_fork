@@ -74,6 +74,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             ckpt_path=None,
             seed: int = 42,
             debug_diff_loss: bool = False,
+            debug_tsne: bool = False,
     ):
         super(MDTDomainAdaptVisualEncoder, self).__init__()
         self.automatic_optimization = False  # manually backward
@@ -175,6 +176,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.cache_t_q = []
         # For debug
         self.debug_diff_loss = debug_diff_loss
+        self.debug_tsne = debug_tsne
 
     def load_pretrained_parameters(self, ckpt_path):
         """
@@ -267,6 +269,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         if self.use_da_act:
             self.set_requires_grad(self.model, True)
             if not self.debug_diff_loss:  # when debug diff loss, finetuning all params of diffusion policy
+                self.model.inner_model.freeze_backbone()
+            else:
                 self.model.inner_model.freeze_backbone()
             g_act_optim_groups.extend([
                 {"params": self.model.inner_model.trainable_params(), "lr": self.optimizer_config.act_lr},
@@ -423,6 +427,11 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         context = self.model.forward_context_only(perceptual_emb, noised_input, latent_goal, sigmas)
         return context
 
+    @staticmethod
+    def shuffle_tensor(x: torch.Tensor, dim: int = 0):
+        idx = torch.randperm(x.size(dim)).to(x.device)
+        return x.index_select(dim, idx)
+
     def training_step(self, batch: Dict[str, Dict], batch_idx: int,
                       dataloader_idx: int = 0) -> torch.Tensor:  # type: ignore
         """
@@ -502,6 +511,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         t_latent_static_emb_dict = {}
         s_latent_gripper_emb_dict = {}
         t_latent_gripper_emb_dict = {}
+        s_latent_encoder_emb_dict = {}
+        t_latent_encoder_emb_dict = {}
         s_latent_action_emb_dict = {}
         t_latent_action_emb_dict = {}
         s_pred_a0_dict = {}
@@ -547,6 +558,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
 
                 # Compute diffusion loss without actions, just for sigmas
                 source_act_0 = dataset_batch['actions']
+                # shuffled_goal = self.shuffle_tensor(latent_goal)  # TODO: setting in config
                 _, sigmas, noise, pred_a0 = self.diffusion_loss(
                     s_perceptual_emb,
                     latent_goal,  # (64,512)
@@ -555,31 +567,26 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                     sigmas=common_sigmas,
                     is_da=False,
                 )  # will call enc_only_forward() and dec_only_forward()
-                common_noise = noise
-                common_sigmas = sigmas if common_sigmas is None else common_sigmas  # TODO: S and T use the same sigmas
+                common_noise = noise  # S and T can use different noise
+                common_sigmas = sigmas if common_sigmas is None else common_sigmas  # only assign sigmas once
                 latent_encoder_emb = self.source_model.inner_model.latent_encoder_emb
                 latent_action_emb = self.source_model.inner_model.cache_action_emb
-                common_sigma_emb = self.source_model.inner_model.cache_sigma_emb
+                common_one_modal_sigma_emb = self.source_model.inner_model.cache_sigma_emb
+                assert common_one_modal_sigma_emb is not None
+                if common_sigma_emb is None:
+                    common_sigma_emb = common_one_modal_sigma_emb
+                else:
+                    common_sigma_emb = torch.cat((common_sigma_emb, common_one_modal_sigma_emb), dim=0)  # repeat
                 action_output = pred_a0
                 ca_output = self.source_model.inner_model.cache_ca_output  # [B,10,512]*6
                 k_output = self.source_model.inner_model.cache_k_output
                 v_output = self.source_model.inner_model.cache_v_output
                 q_output = self.source_model.inner_model.cache_q_output  # [B,8,10,64]*6
-                # self.source_model.inner_model.enc_only_forward(
-                #     s_perceptual_emb,
-                #     actions=None,
-                #     goals=latent_goal,
-                #     sigma=sigmas,
-                # )  # encoder doesn't use actions
-                # latent_encoder_emb = self.source_model.inner_model.latent_encoder_emb
 
                 save_key = self.modality_scope[:-len('_source')]
-                # s_latent_static_emb_dict[save_key] = latent_encoder_emb
-                # s_latent_static_emb_dict[save_key] = torch.cat([
-                #     s_perceptual_emb['static'], s_perceptual_emb['gripper']
-                # ], dim=-1)  # (bs,1,1024)
                 s_latent_static_emb_dict[save_key] = s_perceptual_emb['static']  # (bs,1,512)
                 s_latent_gripper_emb_dict[save_key] = s_perceptual_emb['gripper']
+                s_latent_encoder_emb_dict[save_key] = latent_encoder_emb
                 s_latent_action_emb_dict[save_key] = latent_action_emb
                 s_pred_a0_dict[save_key] = action_output
                 s_action_gt_dict[save_key] = dataset_batch["actions"]
@@ -595,10 +602,11 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
 
                 # Compute diffusion loss without actions, just for sigmas
                 rand_noise = torch.randn_like(common_noise)  # TODO: re-rand
+                shuffled_goal = self.shuffle_tensor(latent_goal)  # TODO: setting in config
                 assert source_act_0 is not None
                 _, sigmas, noise, pred_a0 = self.diffusion_loss(
                     t_perceptual_emb,
-                    latent_goal,
+                    shuffled_goal,
                     source_act_0,  # TODO: no need to calculate loss, ori:rand_noise
                     is_target=True,
                     sigmas=common_sigmas,
@@ -612,13 +620,6 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 k_output = self.model.inner_model.cache_k_output
                 v_output = self.model.inner_model.cache_v_output
                 q_output = self.model.inner_model.cache_q_output
-                # self.model.inner_model.enc_only_forward(
-                #     t_perceptual_emb,
-                #     actions=None,
-                #     goals=latent_goal,
-                #     sigma=sigmas,
-                # )  # encoder doesn't use actions
-                # latent_encoder_emb = self.model.inner_model.latent_encoder_emb
 
                 # Compute diffusion loss for DEBUG (DO NOT use in method!)
                 if self.debug_diff_loss:
@@ -656,12 +657,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 # cont_loss += self.cont_alpha * cont_loss_part
 
                 save_key = self.modality_scope[:-len('_target')]
-                # t_latent_static_emb_dict[self.modality_scope[:-len('_target')]] = latent_encoder_emb
-                # t_latent_static_emb_dict[self.modality_scope[:-len('_target')]] = torch.cat([
-                #     t_perceptual_emb['static'], t_perceptual_emb['gripper']
-                # ], dim=-1)  # (bs,1,1024)
                 t_latent_static_emb_dict[save_key] = t_perceptual_emb['static']  # (bs,1,512)
                 t_latent_gripper_emb_dict[save_key] = t_perceptual_emb['gripper']
+                t_latent_encoder_emb_dict[save_key] = latent_encoder_emb
                 t_latent_action_emb_dict[save_key] = latent_action_emb  # (bs,10,512)
                 t_pred_a0_dict[save_key] = action_output
                 t_action_gt_dict[save_key] = dataset_batch["actions"]
@@ -687,6 +685,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_latent_static_emb_dict = sort_dict(s_latent_static_emb_dict)
         t_latent_gripper_emb_dict = sort_dict(t_latent_gripper_emb_dict)
         s_latent_gripper_emb_dict = sort_dict(s_latent_gripper_emb_dict)
+        t_latent_encoder_emb_dict = sort_dict(t_latent_encoder_emb_dict)
+        s_latent_encoder_emb_dict = sort_dict(s_latent_encoder_emb_dict)
         t_latent_action_emb_dict = sort_dict(t_latent_action_emb_dict)
         s_latent_action_emb_dict = sort_dict(s_latent_action_emb_dict)
         t_ca_dict = sort_dict(t_ca_dict)
@@ -704,6 +704,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_feat_for_da_vis1 = torch.cat([v for v in s_latent_static_emb_dict.values()], dim=0)
         t_feat_for_da_vis2 = torch.cat([v for v in t_latent_gripper_emb_dict.values()], dim=0)
         s_feat_for_da_vis2 = torch.cat([v for v in s_latent_gripper_emb_dict.values()], dim=0)
+        t_feat_for_da_enc = torch.cat([v for v in t_latent_encoder_emb_dict.values()], dim=0)
+        s_feat_for_da_enc = torch.cat([v for v in s_latent_encoder_emb_dict.values()], dim=0)
+
         # t_feat_for_da_act = torch.cat([v for v in t_latent_action_emb_dict.values()], dim=0)
         # s_feat_for_da_act = torch.cat([v for v in s_latent_action_emb_dict.values()], dim=0)
         t_pred_a0_for_da_act = torch.cat([v for v in t_pred_a0_dict.values()], dim=0)
@@ -713,7 +716,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_k_for_da_act: List[torch.Tensor] = []
         t_v_for_da_act: List[torch.Tensor] = []  # 6*[(B,1536)]
         s_v_for_da_act: List[torch.Tensor] = []  # 6*[(B,1536)]
-        t_q_for_da_act: List[torch.Tensor] = []
+        t_q_for_da_act: List[torch.Tensor] = []  # 6*[(B,5120)]
         s_q_for_da_act: List[torch.Tensor] = []
         num_layers = len(list(t_ks_dict.values())[0])
         for l_idx in range(num_layers):
@@ -752,16 +755,16 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             self.cache_t_ca.append([x.detach().float().cpu().reshape(bs, -1).numpy() for x in t_ca_dict[t_key]])
             self.cache_s_ca.append([x.detach().float().cpu().reshape(bs, -1).numpy() for x in s_ca_dict[t_key]])
 
-            # Only show the 1st layer
-            self.cache_t_k.append(t_ks_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_s_k.append(s_ks_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_t_v.append(t_vs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_s_v.append(s_vs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_t_q.append(t_qs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_s_q.append(s_qs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            # Only show the 1st/3rd/last layer
+            self.cache_t_k.append(t_ks_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_k.append(s_ks_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_v.append(t_vs_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_v.append(s_vs_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_q.append(t_qs_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_q.append(s_qs_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
 
         from mdt.datasets.utils.debug_utils import TSNEHelper
-        if (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 200 == 100 and
+        if self.debug_tsne and (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 200 == 100 and
                 len(self.cache_t_emb) >= tsne_batch_nums):
             epoch_idx = self.current_epoch
 
@@ -867,6 +870,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 [x.clone().detach() for x in s_feat_for_da_act],  # avoid grad of G_source
                 is_discriminator_batch=True,
                 sigmas=common_sigma_emb,
+                conditions=[t_feat_for_da_enc.clone().detach(),
+                            s_feat_for_da_enc.clone().detach()],  # concat with sigmas_emb
             )
             da_d_act_loss = da_act_loss_dict['loss']
             w_dist = da_act_loss_dict['w_dist']
@@ -892,6 +897,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 s_feat_for_da_act,  # avoid grad of G_source
                 is_discriminator_batch=False,
                 sigmas=common_sigma_emb,
+                conditions=[t_feat_for_da_enc.clone().detach(),
+                            s_feat_for_da_enc.clone().detach()],  # concat with sigmas_emb
             )
             da_g_act_loss = da_act_loss_dict['loss']
             gp = da_act_loss_dict['gp']  # just for log

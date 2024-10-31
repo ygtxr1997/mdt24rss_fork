@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
+from sympy import discriminant
 from torch.autograd import Variable
 import time as t
 import os
+from typing import List, Tuple
 from torchvision import utils
 import torch.nn.functional as F
 
@@ -127,7 +129,7 @@ class Discriminator1dStyleGAN(torch.nn.Module):
 class AdaLNZero(nn.Module):
     def __init__(self, hidden_size, in_dim=512):
         super(AdaLNZero, self).__init__()
-        self.parts = 2
+        self.parts = 3
         self.modulation = nn.Sequential(
             nn.SiLU(),
             nn.Linear(in_dim, self.parts * hidden_size, bias=True)
@@ -137,16 +139,15 @@ class AdaLNZero(nn.Module):
         weight_shape = list(self.modulation[1].weight.data.shape)
         weight_shape[0] = weight_shape[0] // self.parts
         self.modulation[1].weight = torch.nn.Parameter(torch.cat(
-            [torch.zeros(weight_shape),
-             torch.ones(weight_shape),]
-        ))  # shift=0,scale=1,gate=0
+            [torch.zeros(weight_shape) for _ in range(self.parts)]
+        ))  # shift=0,scale=0,gate=0
         nn.init.zeros_(self.modulation[1].bias)
     def forward(self, c):
         return self.modulation(c).chunk(self.parts, dim=-1)  # shift, scale, gate
 
 
 class Discriminator1d(torch.nn.Module):
-    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False):
+    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False):
         super(Discriminator1d, self).__init__()
         self.stem = nn.Sequential(
             nn.Conv1d(1, inner_dim, 4, 4, 1, bias=False),
@@ -189,24 +190,27 @@ class Discriminator1d(torch.nn.Module):
 
         self.use_ada = use_ada
         if use_ada:
+            sigma_dim = 512 if not use_cond_dist else 512 * 2
             self.cond_mapping = nn.ModuleList([
-                AdaLNZero(inner_dim * 2),
-                AdaLNZero(inner_dim * 4),
-                AdaLNZero(inner_dim * 8),
+                AdaLNZero(inner_dim * 2, in_dim=sigma_dim),
+                AdaLNZero(inner_dim * 4, in_dim=sigma_dim),
+                AdaLNZero(inner_dim * 8, in_dim=sigma_dim),
             ])
 
         self.init_weight()
 
-    def forward(self, x, sigmas=None):  # x:(B,D), s:(B,10)
+    def forward(self, x, sigmas=None):  # x:(B,D), s:(B,512)
         if x.ndim == 2:  # (B,D)
             x = x.unsqueeze(1)  # (B,1,D)
         x = self.stem(x)
 
         for i in range(len(self.convs)):
             x = self.norms[i](x)
+            if self.use_ada: assert sigmas is not None
             if sigmas is not None:
-                c_shift, c_scale = self.cond_mapping[i](sigmas)  # sigma:(B,emb_dim)
-                x = c_shift.unsqueeze(-1) + x * c_scale.unsqueeze(-1)
+                c_shift, c_scale, c_gate = self.cond_mapping[i](sigmas)  # sigma:(B,emb_dim)
+                c_gate = c_gate.unsqueeze(-1)
+                x = (1 - c_gate) * x + c_gate * (c_shift.unsqueeze(-1) + x * (c_scale.unsqueeze(-1) + 1.))
             x = self.convs[i](x)
 
         x = x.reshape(x.size(0), -1)
@@ -223,6 +227,105 @@ class Discriminator1d(torch.nn.Module):
         if self.use_ada:
             for ada in self.cond_mapping:
                 ada.init_weight()
+
+    def calc_params(self):
+        num_params = sum(p.numel() for p in self.parameters())
+        ret_str = f"{num_params/1024/1024:.2f}M Params"
+        return ret_str
+
+
+class CondDistMapping(torch.nn.Module):
+    def __init__(self, in_dim: int = 3 * 512, out_dim: int = 512):
+        super(CondDistMapping, self).__init__()
+        self.dist_emb = nn.Linear(in_dim, out_dim)
+
+    def forward(self, t_cond, s_cond):  # t/s_cond is (B,768)
+        dist = t_cond - s_cond
+        dist_emb = self.dist_emb(dist)
+        return dist_emb
+
+
+class FiLMBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, use_ada: bool = False):
+        super(FiLMBlock, self).__init__()
+        self.use_ada = use_ada
+
+        self.conv1 = nn.Conv1d(in_dim, out_dim, 4, 4, 1, bias=False)
+        self.bn1 = nn.BatchNorm1d(out_dim)
+        self.relu1 = nn.LeakyReLU(0.2, inplace=True)
+
+        self.conv2 = nn.Conv1d(out_dim, out_dim, 3, 1, 1, bias=False)
+        self.bn2 = nn.BatchNorm1d(out_dim)
+        if self.use_ada:
+            self.film = AdaLNZero(hidden_size=1)  # TODO: 1 or out_dim ?
+        self.relu2 = nn.LeakyReLU(0.2, inplace=True)
+
+    def forward(self, x, sigma_emb):
+        # conv1 > bn1 > relu1 > conv2 > bn2 > film > relu2
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu1(x)
+
+        if self.use_ada:
+            # sigma:(B,emb_dim)->(B,emb_dim,1)
+            c_shift, c_scale, c_gate = [c.unsqueeze(-1) for c in self.film(sigma_emb)]
+        else:
+            c_shift, c_scale, c_gate = 0., 0., 0.
+
+        identity = x
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = (1 - c_gate) * x + c_gate * (c_shift + x * (c_scale + 1))
+        x = self.relu2(x)
+        return identity + x
+
+    def init_weight(self):
+        if self.use_ada:
+            self.film.init_weight()
+
+
+class DiscriminatorFiLM1d(nn.Module):
+    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False):
+        super(DiscriminatorFiLM1d, self).__init__()
+        self.stem = nn.Sequential(
+            nn.Conv1d(1, inner_dim, 4, 4, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True))
+        self.blocks = nn.ModuleList([
+            FiLMBlock(inner_dim, inner_dim * 2, use_ada=use_ada),
+            FiLMBlock(inner_dim * 2, inner_dim * 4, use_ada=use_ada),
+            FiLMBlock(inner_dim * 4, inner_dim * 8, use_ada=use_ada),
+        ])
+        self.dropout = nn.Dropout(dropout)
+        self.logit_out = nn.Linear(inner_dim * 8 * (in_dim // 256), 1, bias=False)
+
+        self.init_weight()
+
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv1d, nn.Linear)):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in')
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+        for film_block in self.blocks:
+            film_block.init_weight()
+
+    def forward(self, x, sigma_emb=None):
+        if x.ndim == 2:  # (B,D)
+            x = x.unsqueeze(1)  # (B,1,D)
+        x = self.stem(x)
+
+        for block in self.blocks:
+            x = block(x, sigma_emb)
+
+        x = x.reshape(x.size(0), -1)
+        output = self.logit_out(self.dropout(x))
+        return output
+
+    def calc_params(self):
+        num_params = sum(p.numel() for p in self.parameters())
+        ret_str = f"{num_params/1024/1024:.2f}M Params"
+        return ret_str
 
 
 class Discriminator2d(torch.nn.Module):
@@ -306,27 +409,45 @@ class Discriminator2dSeqGAN(torch.nn.Module):
 from torch.autograd import grad
 class WGAN_GP(torch.nn.Module):
     def __init__(self,
-                 in_dim: int = 3 * 512,
+                 in_dim: str = "1536*6,",
                  inner_dim: int = 64,
                  ndims: int = 2,
                  gamma: float = 10,
                  num_layers: int = 1,
                  use_ada: bool = False,
+                 use_cond_dist: bool = False,
                  ):
         super(WGAN_GP, self).__init__()
         self.num_layers = num_layers
 
         discriminators = []
+        in_dims: List[int] = self.process_in_dim_str(in_dim)
+        assert len(in_dims) == num_layers
         for l in range(self.num_layers):
-            d_net = self.get_discriminators(ndims, in_dim=in_dim, inner_dim=inner_dim, use_ada=use_ada)
+            d_net = self.get_discriminators(ndims, in_dim=in_dims[l], inner_dim=inner_dim,
+                                            use_ada=use_ada, use_cond_dist=use_cond_dist)
             discriminators.append(d_net)
         self.discriminators = nn.ModuleList(discriminators)
 
         self.gamma = gamma
         self.wd_clf = 1
 
+        self.use_cond_dist = use_cond_dist
+        if self.use_cond_dist:
+            self.cond_dist_mapping = CondDistMapping()  # in_dim=condition_dim, out_dim=sigmas_dim
+
         self.cache_wdists = [0. for _ in range(self.num_layers)]
         self.cache_gps = [0. for _ in range(self.num_layers)]
+
+    @staticmethod
+    def process_in_dim_str(in_dim: str):
+        discriminators = in_dim.split(',')
+        dims_list = []
+        for discriminator in discriminators:
+            if discriminator == '': continue
+            dim, layer = [int(x) for x in discriminator.split('*')]
+            dims_list.extend([dim] * layer)
+        return dims_list
 
     @staticmethod
     def get_discriminators(ndims: int, **kwargs):
@@ -338,12 +459,21 @@ class WGAN_GP(torch.nn.Module):
             raise NotImplementedError(f"{ndims} not supported!")
 
     def forward(self, target_feats, source_feats=None, is_discriminator_batch: bool = True,
-                sigmas: torch.Tensor = None):
+                sigmas: torch.Tensor = None,
+                conditions: List[torch.Tensor] = None,  # len=2, each is (B,3*512), order: `t_cond` and `s_cond`
+            ):
         if source_feats is None:
             assert not is_discriminator_batch, "source_feat should be given when is_discriminator_batch=True"
             source_feats = target_feats
 
         assert len(target_feats) == len(source_feats) == self.num_layers
+
+        # Calculate condition distance and map it into latent
+        if self.use_cond_dist:
+            assert len(conditions) == 2
+            conditions = [cond.reshape(cond.shape[0], -1) for cond in conditions]  # (B,3,512)->(B,3*512)
+            dist_emb = self.cond_dist_mapping(conditions[0], conditions[1])  # T and S, cat with sigmas_emb
+            sigmas = torch.cat([sigmas, dist_emb], dim=-1)  # (B,512+512)
 
         loss = 0.
         for l in range(self.num_layers):
@@ -365,7 +495,10 @@ class WGAN_GP(torch.nn.Module):
             device = source_feat.device
 
             if is_discriminator_batch:
-                self.cache_gps[l] = gp = self.gradient_penalty(layer_discriminator, source_feat, target_feat, device)
+                self.cache_gps[l] = gp = self.gradient_penalty(
+                    layer_discriminator, source_feat, target_feat, device,
+                    sigmas=sigmas,
+                )
                 d_source = layer_discriminator(source_feat.detach(), sigmas)            # avoid grad of G_source
                 d_target = layer_discriminator(target_feat.clone().detach(), sigmas)    # avoid grad of G_target
                 self.cache_wdists[l] = wasserstein_distance = d_source.mean() - d_target.mean()
@@ -384,7 +517,7 @@ class WGAN_GP(torch.nn.Module):
             'gp': sum(self.cache_gps) / self.num_layers,
         }
 
-    def gradient_penalty(self, critic, h_s, h_t, device):
+    def gradient_penalty(self, critic, h_s, h_t, device, sigmas):
         # based on: https://github.com/caogang/wgan-gp/blob/master/gan_cifar10.py#L116
         alpha = torch.rand(h_s.size(0)).to(device)
         while alpha.ndim < h_s.ndim:
@@ -394,7 +527,7 @@ class WGAN_GP(torch.nn.Module):
         interpolates.requires_grad_(True)
         # interpolates = torch.stack([interpolates, h_s, h_t]).requires_grad_()
 
-        preds = critic(interpolates)
+        preds = critic(interpolates, sigmas)
         gradients = grad(preds, interpolates,
                          grad_outputs=torch.ones_like(preds),
                          retain_graph=True, create_graph=True)[0]

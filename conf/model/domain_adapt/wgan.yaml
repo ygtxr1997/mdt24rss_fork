@@ -2,21 +2,18 @@
 
 visual_da:
   _target_: mdt.models.domain_adapt.wgan.WGAN_GP
-  in_dim: 512  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512
+  in_dim: "512*1,"  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512
   ndims: 2
   gamma: 10
 
 action_da:
   _target_: mdt.models.domain_adapt.wgan.WGAN_GP
-#  in_dim: 512  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512
-#  inner_dim: 64
-#  ndims: 3
-#  gamma: 0.2
-  in_dim: 1536
+  in_dim: "1536*12,"  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512
   ndims: 2
   gamma: 1
   num_layers: 12  # v:6 layers, k:6 layers
   use_ada: true
+  use_cond_dist: false
 
-use_da_visual: 'false'  # static,gripper,both,false
+use_da_visual: 'both'  # static,gripper,both,false
 use_da_act: true

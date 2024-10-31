@@ -88,8 +88,8 @@ class MDTTransformer(nn.Module):
         self.use_abs_pos_emb = use_abs_pos_emb
         self.action_dim = action_dim
         self.embed_dim = embed_dim
-        self.latent_encoder_emb = None
 
+        self.latent_encoder_emb = None
         self.cache_sigma_emb = None
         self.cache_action_emb = None
         self.cache_action_output = None
@@ -276,6 +276,7 @@ class MDTTransformer(nn.Module):
         else:
             x = self.decoder(action_x, context)
         self.cache_action_emb = x
+        self.cache_sigma_emb = emb_t.squeeze()  # (B,1,512)->(B,512)
         self.cache_ca_output = self.decoder.cache_ca_out
         self.cache_k_output = self.decoder.cache_k_out
         self.cache_v_output = self.decoder.cache_v_out
