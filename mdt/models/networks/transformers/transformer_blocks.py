@@ -331,9 +331,12 @@ class ConditionedBlock(Block):
 
     def unfreeze_cross_attention(self):
         if self.use_cross_attention:
-            self.cross_att.requires_grad_(True)  # TODO: which is better?
+            # self.attn.requires_grad_(True)
+            # self.cross_att.requires_grad_(True)  # TODO: which is better?
             # self.cross_att.key.requires_grad_(True)
-            # self.cross_att.value.requires_grad_(True)
+            self.cross_att.value.requires_grad_(True)
+            self.attn.value.requires_grad_(True)
+            # self.mlp.requires_grad_(True)
             return True
         return False
 

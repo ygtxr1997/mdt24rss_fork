@@ -28,7 +28,7 @@ use_text_not_embedding: True
 ckpt_path: ${root_home}/code/mdt24rss_fork/logs/runs/2024-10-03/20-59-31/calvin_abc/2024-10-03_20-59-31/checkpoints/epoch=39-step=40000.ckpt
 seed: ${seed}
 
-debug_diff_loss: true  # if true, ignore da_act/shuffle_target_goal/cfg_drop_ratio
+debug_diff_loss: false  # if true, ignore da_act/shuffle_target_goal/cfg_drop_ratio
 debug_tsne: false
 shuffle_target_goal: true
 cfg_drop_ratio: 0.2

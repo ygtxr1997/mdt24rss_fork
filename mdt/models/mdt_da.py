@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, Dict, NamedTuple, Optional, Tuple, List
+from typing import Any, Dict, NamedTuple, Optional, Tuple, List, Union
 from functools import partial
 import copy
 
@@ -279,7 +279,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             if not self.debug_diff_loss:  # when debug diff loss, finetuning CA params of diffusion policy
                 self.model.inner_model.freeze_backbone()
             else:
-                self.model.inner_model.freeze_backbone()
+                # self.model.inner_model.freeze_backbone()
+                pass  # finetuning all params
             g_act_optim_groups.extend([
                 {"params": self.model.inner_model.trainable_params(), "lr": self.optimizer_config.act_lr},
                 # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
@@ -399,22 +400,66 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         else:
             model.eval()
 
-    @staticmethod
-    def calc_grad_and_param_norm(module: nn.Module):
+    def calc_grad_and_param_norm(self, module: Union[nn.Module, List[nn.Module]],
+                                 sqrt_out: bool = True,
+                                 ):
         total_grad_norm = 0.0
         total_param_norm = 0.0
-        for name, p in module.named_parameters():
-            if p.grad is not None:
-                total_grad_norm += p.grad.norm().item() ** 2
-            total_param_norm += p.norm().item() ** 2
-        total_grad_norm = total_grad_norm ** 0.5
-        total_param_norm = total_param_norm ** 0.5
-        return total_grad_norm, total_param_norm
+        total_ratio_norm = 0.0
+        if isinstance(module, list):
+            for m in module:
+                m_grad, m_param, m_ratio = self.calc_grad_and_param_norm(m, sqrt_out=False)  # recursive
+                total_grad_norm += m_grad
+                total_param_norm += m_param
+                total_ratio_norm += m_ratio
+        else:
+            assert isinstance(module, nn.Module)
+            for name, p in module.named_parameters():
+                if p.grad is not None:
+                    total_grad_norm += p.grad.norm().item() ** 2
+                    total_ratio_norm += (p.grad.norm().item() / (1e-8 + p.data.norm().item())) ** 2
+                total_param_norm += p.norm().item() ** 2
+        if sqrt_out:
+            total_grad_norm = total_grad_norm ** 0.5
+            total_param_norm = total_param_norm ** 0.5
+            total_ratio_norm = total_ratio_norm ** 0.5
+        return total_grad_norm, total_param_norm, total_ratio_norm
 
     def on_before_zero_grad(self, optimizer=None):
-        vis1_grad_norm, vis1_total_norm = self.calc_grad_and_param_norm(self.static_resnet)
-        vis2_grad_norm, vis2_total_norm = self.calc_grad_and_param_norm(self.gripper_resnet)
-        act_grad_norm, act_total_norm = self.calc_grad_and_param_norm(self.model)
+        vis1_grad_norm, vis1_total_norm, _ = self.calc_grad_and_param_norm(self.static_resnet)
+        vis2_grad_norm, vis2_total_norm, _ = self.calc_grad_and_param_norm(self.gripper_resnet)
+        act_grad_norm, act_total_norm, _ = self.calc_grad_and_param_norm(self.model)
+
+        if self.debug_diff_loss:
+            q_layers = [layer.cross_att.query for layer in self.model.inner_model.decoder.blocks]
+            k_layers = [layer.cross_att.key for layer in self.model.inner_model.decoder.blocks]
+            v_layers = [layer.cross_att.value for layer in self.model.inner_model.decoder.blocks]
+            _, _, q_grad_norm = self.calc_grad_and_param_norm(q_layers)
+            _, _, k_grad_norm = self.calc_grad_and_param_norm(k_layers)
+            _, _, v_grad_norm = self.calc_grad_and_param_norm(v_layers)
+            self.log("grad/ca_q", q_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+            self.log("grad/ca_k", k_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+            self.log("grad/ca_v", v_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+
+            q_layers = [layer.attn.query for layer in self.model.inner_model.decoder.blocks]
+            k_layers = [layer.attn.key for layer in self.model.inner_model.decoder.blocks]
+            v_layers = [layer.attn.value for layer in self.model.inner_model.decoder.blocks]
+            _, _, q_grad_norm = self.calc_grad_and_param_norm(q_layers)
+            _, _, k_grad_norm = self.calc_grad_and_param_norm(k_layers)
+            _, _, v_grad_norm = self.calc_grad_and_param_norm(v_layers)
+            self.log("grad/sa_q", q_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+            self.log("grad/sa_k", k_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+            self.log("grad/sa_v", v_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+
+            ca_layers = [layer.cross_att for layer in self.model.inner_model.decoder.blocks]
+            sa_layers = [layer.attn for layer in self.model.inner_model.decoder.blocks]
+            mlp_layers = [layer.mlp for layer in self.model.inner_model.decoder.blocks]
+            _, _, ca_grad_norm= self.calc_grad_and_param_norm(ca_layers)
+            _, _, sa_grad_norm = self.calc_grad_and_param_norm(sa_layers)
+            _, _, mlp_grad_norm = self.calc_grad_and_param_norm(mlp_layers)
+            self.log("grad/ca_all", ca_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+            self.log("grad/sa_all", sa_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+            self.log("grad/mlp", mlp_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
 
         self.log("train/vis1_grad_norm", vis1_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
         self.log("train/vis1_total_norm", vis1_total_norm, on_step=True, on_epoch=False, sync_dist=True)
@@ -755,14 +800,16 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 self.log_kl_loss(t_v, s_v, f'v_layer{l_idx:02d}', total_bs)
                 self.log_kl_loss(t_q, s_q, f'q_layer{l_idx:02d}', total_bs)
 
-                half_shape = s_k.shape[0]
+                half_shape = s_k.shape[0] // 2
                 self.log_kl_loss(s_k[:half_shape], s_k[half_shape:], f'source_k_layer{l_idx:02d}', total_bs)
+                half_shape = s_v.shape[0] // 2
                 self.log_kl_loss(s_v[:half_shape], s_v[half_shape:], f'source_v_layer{l_idx:02d}', total_bs)
+                half_shape = s_q.shape[0] // 2
                 self.log_kl_loss(s_q[:half_shape], s_q[half_shape:], f'source_q_layer{l_idx:02d}', total_bs)
 
 
-        t_feat_for_da_act = t_v_for_da_act + t_k_for_da_act
-        s_feat_for_da_act = s_v_for_da_act + s_k_for_da_act
+        t_feat_for_da_act = t_v_for_da_act  # + t_k_for_da_act
+        s_feat_for_da_act = s_v_for_da_act  # + s_k_for_da_act
 
         ''' 1. Update discriminator '''
         tsne_batch_nums = 10
