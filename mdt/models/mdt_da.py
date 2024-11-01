@@ -180,7 +180,11 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.cache_t_q = []
         # For debug
         self.debug_diff_loss = debug_diff_loss
+        if self.debug_diff_loss:
+            self.shuffle_target_goal = False
+            self.cfg_drop_ratio = 0.
         self.debug_tsne = debug_tsne
+        self.kl = nn.KLDivLoss(reduction='batchmean', log_target=True)
 
     def load_pretrained_parameters(self, ckpt_path):
         """
@@ -272,7 +276,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.model, False)
         if self.use_da_act:
             self.set_requires_grad(self.model, True)
-            if not self.debug_diff_loss:  # when debug diff loss, finetuning all params of diffusion policy
+            if not self.debug_diff_loss:  # when debug diff loss, finetuning CA params of diffusion policy
                 self.model.inner_model.freeze_backbone()
             else:
                 self.model.inner_model.freeze_backbone()
@@ -437,6 +441,13 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             return x.index_select(dim, idx)
         else:
             return x  # do nothing
+
+    @torch.no_grad()
+    def log_kl_loss(self, target, source, suffix: str, total_bs):
+        kl_loss = self.kl(F.log_softmax(target, dim=-1), F.softmax(source, dim=-1))
+        self.log(f"kl_loss/{suffix}", kl_loss.clone().detach(),
+                 on_step=True, on_epoch=False, sync_dist=True, batch_size=total_bs)
+        return
 
     def training_step(self, batch: Dict[str, Dict], batch_idx: int,
                       dataloader_idx: int = 0) -> torch.Tensor:  # type: ignore
@@ -734,6 +745,21 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             s_v_for_da_act.append(torch.cat([fs[l_idx] for fs in s_vs_dict.values()], dim=0))
             t_q_for_da_act.append(torch.cat([fs[l_idx] for fs in t_qs_dict.values()], dim=0))
             s_q_for_da_act.append(torch.cat([fs[l_idx] for fs in s_qs_dict.values()], dim=0))
+
+        if self.debug_diff_loss:
+            for l_idx in range(num_layers):
+                t_k, s_k = t_k_for_da_act[l_idx], s_k_for_da_act[l_idx]
+                t_v, s_v = t_v_for_da_act[l_idx], s_v_for_da_act[l_idx]
+                t_q, s_q = t_q_for_da_act[l_idx], s_q_for_da_act[l_idx]
+                self.log_kl_loss(t_k, s_k, f'k_layer{l_idx:02d}', total_bs)
+                self.log_kl_loss(t_v, s_v, f'v_layer{l_idx:02d}', total_bs)
+                self.log_kl_loss(t_q, s_q, f'q_layer{l_idx:02d}', total_bs)
+
+                half_shape = s_k.shape[0]
+                self.log_kl_loss(s_k[:half_shape], s_k[half_shape:], f'source_k_layer{l_idx:02d}', total_bs)
+                self.log_kl_loss(s_v[:half_shape], s_v[half_shape:], f'source_v_layer{l_idx:02d}', total_bs)
+                self.log_kl_loss(s_q[:half_shape], s_q[half_shape:], f'source_q_layer{l_idx:02d}', total_bs)
+
 
         t_feat_for_da_act = t_v_for_da_act + t_k_for_da_act
         s_feat_for_da_act = s_v_for_da_act + s_k_for_da_act

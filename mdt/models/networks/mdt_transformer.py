@@ -207,7 +207,7 @@ class MDTTransformer(nn.Module):
             param.requires_grad = False
         # TODO: train what?
         self.decoder.unfreeze_cross_attention()
-        self.unfreeze_module(self.action_pred)
+        # self.unfreeze_module(self.action_pred)
         cnt = 0
         for p in self.parameters():
             if p.requires_grad:
