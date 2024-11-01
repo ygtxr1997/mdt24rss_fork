@@ -205,9 +205,7 @@ class MDTTransformer(nn.Module):
     def freeze_backbone(self):
         for name, param in self.named_parameters():
             param.requires_grad = False
-        # TODO: train what?
         self.decoder.unfreeze_cross_attention()
-        # self.unfreeze_module(self.action_pred)
         cnt = 0
         for p in self.parameters():
             if p.requires_grad:

@@ -808,8 +808,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 self.log_kl_loss(s_q[:half_shape], s_q[half_shape:], f'source_q_layer{l_idx:02d}', total_bs)
 
 
-        t_feat_for_da_act = t_v_for_da_act  # + t_k_for_da_act
-        s_feat_for_da_act = s_v_for_da_act  # + s_k_for_da_act
+        t_feat_for_da_act = t_v_for_da_act + t_k_for_da_act
+        s_feat_for_da_act = s_v_for_da_act + s_k_for_da_act
 
         ''' 1. Update discriminator '''
         tsne_batch_nums = 10
