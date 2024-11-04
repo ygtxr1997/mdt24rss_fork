@@ -1,3 +1,6 @@
 [submodule "calvin_env"]
 	path = calvin_env
 	url = git@github.com:ygtxr1997/calvin_env.git
+[submodule "rdt24"]
+	path = rdt24
+	url = git@github.com:ygtxr1997/rdt24tsinghua.git
