@@ -45,6 +45,7 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
         datasets: DictConfig,  # source and target use the same vision-language config
         source_root_data_dir: str = "XXX/task_ABC_D/",
         target_root_data_dir: str = "XXX/task_D_D/",
+        target_train_ratio: float = 1.,
         num_workers: int = 8,
         transforms: DictConfig = DEFAULT_TRANSFORM,
         shuffle_val: bool = False,
@@ -69,6 +70,8 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
         self.t_val_dir = target_root_data_path / "validation"
         self.training_dirs = [self.s_training_dir, self.t_training_dir]
         self.val_dirs = [self.s_val_dir, self.t_val_dir]
+
+        self.target_train_ratio = float(target_train_ratio)
 
         self.shuffle_val = shuffle_val
         self.modalities: List[str] = []
@@ -185,7 +188,8 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
                 continue
             else:
                 t_train_dataset = hydra.utils.instantiate(
-                    dataset, datasets_dir=self.t_training_dir, transforms=self.t_train_transforms
+                    dataset, datasets_dir=self.t_training_dir, transforms=self.t_train_transforms,
+                    chose_ratio=self.target_train_ratio,
                 )
                 t_val_dataset = hydra.utils.instantiate(
                     dataset, datasets_dir=self.t_val_dir, transforms=self.t_val_transforms
@@ -209,8 +213,8 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
                 self.val_datasets[f"{key}_source"] = s_val_dataset
                 self.val_datasets[f"{key}_target"] = t_val_dataset  # to avoid 1 thread accessing 2 different dirs
                 self.modalities.append(key)  # "lang", "vis"
-                print(f'[DEBUG] HulcDomainAdaptDataModule: train_{key}_s_len={len(s_train_dataset)}, '
-                      f'train_{key}_t_len={len(t_train_dataset)}')
+                logger.info(f'HulcDomainAdaptDataModule: train_{key}_s_len={len(s_train_dataset)}, '
+                            f'train_{key}_t_len={len(t_train_dataset)}, chose_ratio={self.target_train_ratio * 100:.3f}%')
         print(f'[DEBUG] HulcDomainAdaptDataModule setup finished. '
               f'train.keys:{self.train_datasets.keys()}, '
               f'val.keys:{self.val_datasets.keys()}.')

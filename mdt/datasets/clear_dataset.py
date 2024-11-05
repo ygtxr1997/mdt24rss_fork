@@ -106,6 +106,7 @@ class ClearDataset(Dataset):
         extracted_dir: str = 'extracted/',
         ## Others ##
         max_len: int = None,
+        chose_ratio: float = 1.,
     ):
         self.observation_space = obs_space
         self.proprio_state = proprio_state
@@ -148,7 +149,11 @@ class ClearDataset(Dataset):
             self.episode_lookup = self._build_file_indices(self.abs_datasets_dir)
 
         if max_len is not None:
-            self.episode_lookup = self.episode_lookup[:max_len]
+            self.episode_lookup: np.ndarray = self.episode_lookup[:max_len]
+
+        self.lookup_len = len(self.episode_lookup)
+        self.chose_ratio = chose_ratio
+        self.chose_len = int(self.lookup_len * chose_ratio)  # accessible ep length
 
         self.naming_pattern, self.n_digits = lookup_naming_pattern(self.abs_datasets_dir, self.save_format)
 
@@ -187,10 +192,6 @@ class ClearDataset(Dataset):
         Returns:
             Loaded sequence.
         """
-        # import os
-        # print(f'[DEBUG][LitData] Rank@{os.environ["LOCAL_RANK"]}: len={len(self.lit_dataset)}')
-        # self.lit_dataset.__getitem__(2000)
-        # print('[DEBUG] 2000 got!')
         if isinstance(idx, int):
             # When max_ws_size and min_ws_size are equal, avoid unnecessary padding
             # acts like Constant dataset. Currently, used for language data
@@ -203,6 +204,13 @@ class ClearDataset(Dataset):
                 raise ValueError
         else:
             idx, window_size = idx
+
+        if idx < self.chose_len:
+            pass  # do nothing
+        else:
+            # To avoid overflow
+            idx = np.random.randint(0, self.chose_len)
+
         sequence = self._get_sequences(idx, window_size)
         if self.pad:  # used:False
             pad_size = self._get_pad_size(sequence)

@@ -276,10 +276,11 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.model, False)
         if self.use_da_act:
             self.set_requires_grad(self.model, True)
-            if not self.debug_diff_loss:  # when debug diff loss, finetuning CA params of diffusion policy
+            if not self.debug_diff_loss:  # when NOT debug diff loss, finetuning CA params of diffusion policy
                 self.model.inner_model.freeze_backbone()
             else:
-                # self.model.inner_model.freeze_backbone()
+                # Debug diff loss
+                # self.model.inner_model.freeze_backbone()  # using the same setting with da_act
                 pass  # finetuning all params
             g_act_optim_groups.extend([
                 {"params": self.model.inner_model.trainable_params(), "lr": self.optimizer_config.act_lr},
@@ -806,7 +807,6 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 self.log_kl_loss(s_v[:half_shape], s_v[half_shape:], f'source_v_layer{l_idx:02d}', total_bs)
                 half_shape = s_q.shape[0] // 2
                 self.log_kl_loss(s_q[:half_shape], s_q[half_shape:], f'source_q_layer{l_idx:02d}', total_bs)
-
 
         t_feat_for_da_act = t_v_for_da_act + t_k_for_da_act
         s_feat_for_da_act = s_v_for_da_act + s_k_for_da_act

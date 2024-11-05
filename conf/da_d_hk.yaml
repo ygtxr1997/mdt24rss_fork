@@ -33,7 +33,7 @@ multistep: 10
 p_last_state: 0
 gen_img_res: 112
 max_epochs: 41
-rollout_lh_skip_epochs: 2  # default:3
+rollout_lh_skip_epochs: 3  # default:3
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 12
@@ -48,7 +48,7 @@ trainer:
   max_epochs: ${max_epochs}
   sync_batchnorm: false
   accelerator: auto
-  limit_train_batches: 300
+  limit_train_batches: 300  # ori:300
   limit_val_batches: 4
 
 logger:

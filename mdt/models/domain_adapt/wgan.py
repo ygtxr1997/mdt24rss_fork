@@ -147,10 +147,14 @@ class AdaLNZero(nn.Module):
 
 
 class Discriminator1d(torch.nn.Module):
-    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False):
+    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False,
+                 ndim: int = 2, time_dim: int = 10,
+                 ):
         super(Discriminator1d, self).__init__()
+        down_scale = min(4, in_dim // 64)
+        stem_in_dim = 1 if ndim == 2 else time_dim  # (B,1,D) or (B,T,D)
         self.stem = nn.Sequential(
-            nn.Conv1d(1, inner_dim, 4, 4, 1, bias=False),
+            nn.Conv1d(stem_in_dim, inner_dim, 4, down_scale, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv1d(inner_dim, inner_dim * 2, 4, 4, 1, bias=False),
         )
@@ -186,7 +190,10 @@ class Discriminator1d(torch.nn.Module):
         #     nn.LeakyReLU(0.2, inplace=True),
         # )
         self.dropout = nn.Dropout(dropout)
-        self.logit_out = nn.Linear(inner_dim * 8 * (in_dim // 256), 1, bias=False)
+        if in_dim < 256:
+            self.logit_out = nn.Linear(inner_dim * 8 * 1, 1, bias=False)
+        else:
+            self.logit_out = nn.Linear(inner_dim * 8 * (in_dim // 256), 1, bias=False)
 
         self.use_ada = use_ada
         if use_ada:
@@ -410,8 +417,9 @@ from torch.autograd import grad
 class WGAN_GP(torch.nn.Module):
     def __init__(self,
                  in_dim: str = "1536*6,",
+                 in_ndim: str = "2*6,",
+                 time_dim: int = 10,
                  inner_dim: int = 64,
-                 ndims: int = 2,
                  gamma: float = 10,
                  num_layers: int = 1,
                  use_ada: bool = False,
@@ -422,10 +430,12 @@ class WGAN_GP(torch.nn.Module):
 
         discriminators = []
         in_dims: List[int] = self.process_in_dim_str(in_dim)
+        in_ndims: List[int] = self.process_in_dim_str(in_ndim)
         assert len(in_dims) == num_layers
         for l in range(self.num_layers):
-            d_net = self.get_discriminators(ndims, in_dim=in_dims[l], inner_dim=inner_dim,
-                                            use_ada=use_ada, use_cond_dist=use_cond_dist)
+            d_net = self.get_discriminators(in_ndims[l], in_dim=in_dims[l], inner_dim=inner_dim,
+                                            use_ada=use_ada, use_cond_dist=use_cond_dist,
+                                            time_dim=time_dim)
             discriminators.append(d_net)
         self.discriminators = nn.ModuleList(discriminators)
 
@@ -450,13 +460,13 @@ class WGAN_GP(torch.nn.Module):
         return dims_list
 
     @staticmethod
-    def get_discriminators(ndims: int, **kwargs):
-        if ndims == 2:  # (B,D)
-            return Discriminator1d(**kwargs)
-        elif ndims == 3:  # (B,T,D)
-            return Discriminator2d(**kwargs)
+    def get_discriminators(ndim: int, **kwargs):
+        if ndim == 2:  # (B,D)
+            return Discriminator1d(ndim=ndim, **kwargs)
+        elif ndim == 3:  # (B,T,D)
+            return Discriminator1d(ndim=ndim, **kwargs)  # also use 1d
         else:
-            raise NotImplementedError(f"{ndims} not supported!")
+            raise NotImplementedError(f"{ndim} not supported!")
 
     def forward(self, target_feats, source_feats=None, is_discriminator_batch: bool = True,
                 sigmas: torch.Tensor = None,

@@ -7,6 +7,8 @@ _recursive_: false
 
 source_root_data_dir: ${source_root_data_dir}
 target_root_data_dir: ${target_root_data_dir}
+target_train_ratio: 1.0  # default:1.0, others:0.5,1e-1,1e-2,1e-3
+
 action_space: 7
 action_max: [1., 1., 1., 1., 1., 1., 1.,]
 action_min: [-1., -1., -1., -1., -1., -1., -1]
