@@ -138,9 +138,10 @@ class AdaLNZero(nn.Module):
         # Initialize weights and biases to zero
         weight_shape = list(self.modulation[1].weight.data.shape)
         weight_shape[0] = weight_shape[0] // self.parts
-        self.modulation[1].weight = torch.nn.Parameter(torch.cat(
-            [torch.zeros(weight_shape) for _ in range(self.parts)]
-        ))  # shift=0,scale=0,gate=0
+        # self.modulation[1].weight = torch.nn.Parameter(torch.cat(
+        #     [torch.zeros(weight_shape) for _ in range(self.parts)]
+        # ))  # shift=0,scale=0,gate=0
+        nn.init.normal_(self.modulation[1].weight, std=0.02)
         nn.init.zeros_(self.modulation[1].bias)
     def forward(self, c):
         return self.modulation(c).chunk(self.parts, dim=-1)  # shift, scale, gate

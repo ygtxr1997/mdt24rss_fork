@@ -348,7 +348,7 @@ class ConditionedBlock(Block):
                 self.ff_down = nn.Linear(in_dim, inner_dim, bias=False)
                 self.activation = nn.GELU()
                 self.ff_up = nn.Linear(inner_dim, in_dim, bias=False)
-                torch.nn.init.zeros_(self.ff_down.weight)
+                torch.nn.init.normal_(self.ff_down.weight, std=0.02)
                 torch.nn.init.zeros_(self.ff_up.weight)
             def forward(self, x):
                 return x + self.ff_up(self.activation(self.ff_down(x)))

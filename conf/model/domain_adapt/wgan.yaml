@@ -17,6 +17,6 @@ action_da:
 
 use_da_visual: 'false'  # static,gripper,both,false
 use_da_act: true
-act_loss_from: "k,v"  # ori:`k,v`
+act_loss_from: "k,v"  # ori:`k,v`, choices:`k`,`v`,`q`,`sa`,`ca`
 act_layers: 6  # ori:6
-act_weights: "adapter"  # ori:`ca`
+act_weights: "ca"  # ori:`ca`, choices:`ca`,`adapter`

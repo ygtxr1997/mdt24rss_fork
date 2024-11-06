@@ -282,9 +282,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.model, False)
         if self.use_da_act:
             self.set_requires_grad(self.model, True)
+            unfreeze_ca = "ca" in self.act_weights
+            unfreeze_adapter = "adapter" in self.act_weights
             if not self.debug_diff_loss:  # when NOT debug diff loss, finetuning CA params of diffusion policy
-                unfreeze_ca = "ca" in self.act_weights
-                unfreeze_adapter = "adapter" in self.act_weights
                 self.model.inner_model.freeze_backbone(
                     unfreeze_ca=unfreeze_ca, unfreeze_adapter=unfreeze_adapter
                 )
@@ -855,11 +855,14 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             t_feat_for_da_act.extend(t_k_for_da_act[:former_layers])
             s_feat_for_da_act.extend(s_k_for_da_act[:former_layers])
         if 'q' in self.act_loss_from:
-            t_feat_for_da_act.extend(t_q_for_da_act[-1:])  # only last layer
-            s_feat_for_da_act.extend(s_q_for_da_act[-1:])
+            t_feat_for_da_act.extend(t_q_for_da_act[:former_layers])  # only last layer
+            s_feat_for_da_act.extend(s_q_for_da_act[:former_layers])
+        if 'sa' in self.act_loss_from:
+            t_feat_for_da_act.extend(t_sa_for_da_act)
+            s_feat_for_da_act.extend(s_sa_for_da_act)
         if 'ca' in self.act_loss_from:
             t_feat_for_da_act.extend(t_ca_for_da_act)
-            t_feat_for_da_act.extend(s_ca_for_da_act)
+            s_feat_for_da_act.extend(s_ca_for_da_act)
 
         ''' 1. Update discriminator '''
         tsne_batch_nums = 10
@@ -1039,7 +1042,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             retain_graph = self.use_da_vis1 or self.use_da_vis2  # Keep backward graph for later modules
             if not self.debug_diff_loss:
                 self.manual_backward(losses['da_g_act_loss'], retain_graph=retain_graph)
-            elif self.current_epoch >= 1 or batch_idx > 150:  # Only for debug
+            elif self.current_epoch >= 1 or batch_idx > 10:  # Only for debug
                 self.manual_backward(backward_loss)
             g_act_opt.step()
             g_act_sch.step()
