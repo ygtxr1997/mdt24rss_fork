@@ -146,6 +146,12 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.use_da_vis1: bool = domain_adapt.use_da_visual in ('both', 'static')
         self.use_da_vis2: bool = domain_adapt.use_da_visual in ('both', 'gripper')
         self.use_da_act: bool = domain_adapt.use_da_act
+        self.act_loss_from: str = domain_adapt.act_loss_from
+        self.act_layers: str = domain_adapt.act_layers
+        self.act_weights: str = domain_adapt.act_weights
+        # Register Adapter blocks for trainable modules
+        if 'adapter' in domain_adapt.act_weights:
+            self.model.inner_model.decoder.register_adapter()
         if debug_diff_loss:
             self.use_da_vis1 = self.use_da_vis2 = False
         if self.use_da_vis1:
@@ -277,7 +283,11 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         if self.use_da_act:
             self.set_requires_grad(self.model, True)
             if not self.debug_diff_loss:  # when NOT debug diff loss, finetuning CA params of diffusion policy
-                self.model.inner_model.freeze_backbone()
+                unfreeze_ca = "ca" in self.act_weights
+                unfreeze_adapter = "adapter" in self.act_weights
+                self.model.inner_model.freeze_backbone(
+                    unfreeze_ca=unfreeze_ca, unfreeze_adapter=unfreeze_adapter
+                )
             else:
                 # Debug diff loss
                 # self.model.inner_model.freeze_backbone()  # using the same setting with da_act
@@ -582,6 +592,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         t_pred_a0_dict = {}
         s_action_gt_dict = {}
         t_action_gt_dict = {}
+        s_sa_dict = {}
+        t_sa_dict = {}
         s_ca_dict = {}
         t_ca_dict = {}
         s_ks_dict: Dict[str, List[torch.Tensor]] = {}
@@ -642,8 +654,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 else:
                     common_sigma_emb = torch.cat((common_sigma_emb, common_one_modal_sigma_emb), dim=0)  # repeat
                 action_output = pred_a0
+                sa_output = self.source_model.inner_model.cache_sa_output
                 ca_output = self.source_model.inner_model.cache_ca_output  # [B,10,512]*6
-                k_output = self.source_model.inner_model.cache_k_output
+                k_output = self.source_model.inner_model.cache_k_output  # [B,8,3,64]*6
                 v_output = self.source_model.inner_model.cache_v_output
                 q_output = self.source_model.inner_model.cache_q_output  # [B,8,10,64]*6
 
@@ -654,7 +667,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 s_latent_action_emb_dict[save_key] = latent_action_emb
                 s_pred_a0_dict[save_key] = action_output
                 s_action_gt_dict[save_key] = dataset_batch["actions"]
-                s_ca_dict[save_key] = ca_output[0]  # [B,10,512]*6
+                s_sa_dict[save_key] = sa_output
+                s_ca_dict[save_key] = ca_output  # [B,10,512]*6
                 s_ks_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in k_output]  # (B,8,3,64)->(B,1536)
                 s_vs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in v_output]
                 s_qs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in q_output]
@@ -681,6 +695,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 latent_encoder_emb = self.model.inner_model.latent_encoder_emb
                 latent_action_emb = self.model.inner_model.cache_action_emb
                 action_output = pred_a0
+                sa_output = self.model.inner_model.cache_sa_output
                 ca_output = self.model.inner_model.cache_ca_output  # [B,10,512]*6
                 k_output = self.model.inner_model.cache_k_output
                 v_output = self.model.inner_model.cache_v_output
@@ -728,7 +743,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 t_latent_action_emb_dict[save_key] = latent_action_emb  # (bs,10,512)
                 t_pred_a0_dict[save_key] = action_output
                 t_action_gt_dict[save_key] = dataset_batch["actions"]
-                t_ca_dict[save_key] = ca_output[0]  # [B,10,512]*6
+                t_sa_dict[save_key] = sa_output
+                t_ca_dict[save_key] = ca_output # [B,10,512]*6
                 t_ks_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in k_output]  # (B,8,3,64)->(B,1536)
                 t_vs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in v_output]
                 t_qs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in q_output]  # (B,8,10,64)
@@ -754,6 +770,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_latent_encoder_emb_dict = sort_dict(s_latent_encoder_emb_dict)
         t_latent_action_emb_dict = sort_dict(t_latent_action_emb_dict)
         s_latent_action_emb_dict = sort_dict(s_latent_action_emb_dict)
+        t_sa_dict = sort_dict(t_sa_dict)
+        s_sa_dict = sort_dict(s_sa_dict)
         t_ca_dict = sort_dict(t_ca_dict)
         s_ca_dict = sort_dict(s_ca_dict)
         t_ks_dict = sort_dict(t_ks_dict)
@@ -772,8 +790,27 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         t_feat_for_da_enc = torch.cat([v for v in t_latent_encoder_emb_dict.values()], dim=0)
         s_feat_for_da_enc = torch.cat([v for v in s_latent_encoder_emb_dict.values()], dim=0)
 
+        def cat_list_tensor(llt: List[List[torch.Tensor]], dim=0) -> List[torch.Tensor]:
+            lt1 = llt[0]
+            for i in range(len(lt1)):
+                lt1[i] = torch.cat([lt[i] for lt in llt], dim=dim)
+            return lt1
+
         # t_feat_for_da_act = torch.cat([v for v in t_latent_action_emb_dict.values()], dim=0)
         # s_feat_for_da_act = torch.cat([v for v in s_latent_action_emb_dict.values()], dim=0)
+        t_sa_for_da_act = cat_list_tensor(list(t_sa_dict.values()))  # v:[B,10,512]*6, out:[2*B,10,512]*6
+        s_sa_for_da_act = cat_list_tensor(list(s_sa_dict.values()))
+        t_ca_for_da_act = cat_list_tensor(list(t_ca_dict.values()))
+        s_ca_for_da_act = cat_list_tensor(list(s_ca_dict.values()))
+
+        # for i in range(len(t_sa_for_da_act)):
+        #     print(f"layer = {i}")
+        #     print(t_sa_for_da_act[i].shape)
+        #     print(s_sa_for_da_act[i].shape)
+        #     print(t_ca_for_da_act[i].shape)
+        #     print(s_ca_for_da_act[i].shape)
+        # exit()
+
         t_pred_a0_for_da_act = torch.cat([v for v in t_pred_a0_dict.values()], dim=0)
         s_pred_a0_for_da_act = torch.cat([v for v in s_pred_a0_dict.values()], dim=0)
 
@@ -808,8 +845,21 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 half_shape = s_q.shape[0] // 2
                 self.log_kl_loss(s_q[:half_shape], s_q[half_shape:], f'source_q_layer{l_idx:02d}', total_bs)
 
-        t_feat_for_da_act = t_v_for_da_act + t_k_for_da_act
-        s_feat_for_da_act = s_v_for_da_act + s_k_for_da_act
+        former_layers = self.act_layers
+        t_feat_for_da_act = []
+        s_feat_for_da_act = []
+        if 'v' in self.act_loss_from:
+            t_feat_for_da_act.extend(t_v_for_da_act[:former_layers])
+            s_feat_for_da_act.extend(s_v_for_da_act[:former_layers])
+        if 'k' in self.act_loss_from:
+            t_feat_for_da_act.extend(t_k_for_da_act[:former_layers])
+            s_feat_for_da_act.extend(s_k_for_da_act[:former_layers])
+        if 'q' in self.act_loss_from:
+            t_feat_for_da_act.extend(t_q_for_da_act[-1:])  # only last layer
+            s_feat_for_da_act.extend(s_q_for_da_act[-1:])
+        if 'ca' in self.act_loss_from:
+            t_feat_for_da_act.extend(t_ca_for_da_act)
+            t_feat_for_da_act.extend(s_ca_for_da_act)
 
         ''' 1. Update discriminator '''
         tsne_batch_nums = 10

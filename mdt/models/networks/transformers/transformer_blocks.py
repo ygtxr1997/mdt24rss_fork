@@ -298,6 +298,10 @@ class ConditionedBlock(Block):
                          rotary_xpos=rotary_xpos, 
                          bias=bias)
         self.adaLN_zero = AdaLNZero(film_cond_dim)
+
+        self.has_adapter = False
+
+        self.cache_sa_out = None
         self.cache_ca_out = None
         self.cache_k_out = None
         self.cache_v_out = None
@@ -309,11 +313,16 @@ class ConditionedBlock(Block):
         # Attention with modulation
         x_attn = self.ln_1(x)
         x_attn = modulate(x_attn, shift_msa, scale_msa)
-        x = x + gate_msa * self.attn(x_attn, custom_attn_mask=custom_attn_mask)
+        self.cache_sa_out = x + gate_msa * self.attn(x_attn, custom_attn_mask=custom_attn_mask)
+        x = self.cache_sa_out
         
         # Cross attention if used
         if self.use_cross_attention and context is not None:
-            self.cache_ca_out = x + self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask)
+            if not self.has_adapter:
+                self.cache_ca_out = x + self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask)
+            else:
+                self.cache_ca_out = x + self.ca_adapter(
+                    self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask))
             x = self.cache_ca_out
             self.cache_k_out = self.cross_att.cache_k_out
             self.cache_v_out = self.cross_att.cache_v_out
@@ -322,12 +331,37 @@ class ConditionedBlock(Block):
         # MLP with modulation
         x_mlp = self.ln_2(x)
         x_mlp = modulate(x_mlp, shift_mlp, scale_mlp)
-        x = x + gate_mlp * self.mlp(x_mlp)
+        if not self.has_adapter:
+            x = x + gate_mlp * self.mlp(x_mlp)
+        else:
+            x = x + self.mlp_adapter(gate_mlp * self.mlp(x_mlp))
         
         return x
 
-    def unfreeze_final_layers(self):
-        self.mlp.requires_grad_(True)
+    def register_adapter(self):
+        self.has_adapter = True
+
+        class BottleNeckAdapter(nn.Module):
+            def __init__(self, in_dim: int):
+                super(BottleNeckAdapter, self).__init__()
+                inner_dim = in_dim // 2
+                self.ff_down = nn.Linear(in_dim, inner_dim, bias=False)
+                self.activation = nn.GELU()
+                self.ff_up = nn.Linear(inner_dim, in_dim, bias=False)
+                torch.nn.init.zeros_(self.ff_down.weight)
+                torch.nn.init.zeros_(self.ff_up.weight)
+            def forward(self, x):
+                return x + self.ff_up(self.activation(self.ff_down(x)))
+
+        self.register_module('ca_adapter', BottleNeckAdapter(512))
+        self.register_module('mlp_adapter', BottleNeckAdapter(512))
+
+    def unfreeze_adapter(self):
+        if not hasattr(self, 'ca_adapter'):
+            print("[Warning] Adapter not found! Now register it!")
+            self.register_adapter()
+        self.ca_adapter.requires_grad_(True)
+        self.mlp_adapter.requires_grad_(True)
 
     def unfreeze_cross_attention(self):
         if self.use_cross_attention:
@@ -595,12 +629,14 @@ class TransformerFiLMDecoder(nn.Module):
                 for _ in range(n_layers)]
             )
         self.ln = LayerNorm(embed_dim, bias)
+        self.cache_sa_out = []
         self.cache_ca_out = []
         self.cache_k_out = []
         self.cache_v_out = []
         self.cache_q_out = []
 
     def forward(self, x, c, cond=None, custom_attn_mask=None):
+        self.cache_sa_out = []
         self.cache_ca_out = []
         self.cache_k_out = []
         self.cache_v_out = []
@@ -610,6 +646,7 @@ class TransformerFiLMDecoder(nn.Module):
             if layer.cache_ca_out is not None:
                 assert layer.cache_k_out is not None
                 assert layer.cache_v_out is not None
+                self.cache_sa_out.append(layer.cache_sa_out)
                 self.cache_ca_out.append(layer.cache_ca_out)
                 self.cache_k_out.append(layer.cache_k_out)
                 self.cache_v_out.append(layer.cache_v_out)
@@ -617,8 +654,19 @@ class TransformerFiLMDecoder(nn.Module):
         x = self.ln(x)
         return x
 
-    def unfreeze_final_layers(self):
-        self.blocks[-1].unfreeze_final_layers()
+    def register_adapter(self):
+        unfrozen_cnt = 0
+        for block in self.blocks:
+            block.register_adapter()
+            unfrozen_cnt += 1
+        print('[DEBUG] register adapters:', unfrozen_cnt)
+
+    def unfreeze_adapter(self):
+        unfrozen_cnt = 0
+        for block in self.blocks:
+            block.unfreeze_adapter()
+            unfrozen_cnt += 1
+        print('[DEBUG] unfrozen adapters:', unfrozen_cnt)
 
     def unfreeze_cross_attention(self):
         unfrozen_cnt = 0
