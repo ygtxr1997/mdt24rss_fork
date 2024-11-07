@@ -98,6 +98,8 @@ class MDTTransformer(nn.Module):
         self.cache_k_output = None
         self.cache_v_output = None
         self.cache_q_output = None
+        self.cache_qk_output = None
+        self.cache_qkv_output = None
 
         if use_mlp_goal:
             self.goal_emb = nn.Sequential(
@@ -285,6 +287,8 @@ class MDTTransformer(nn.Module):
         self.cache_k_output = self.decoder.cache_k_out
         self.cache_v_output = self.decoder.cache_v_out
         self.cache_q_output = self.decoder.cache_q_out
+        self.cache_qk_output = self.decoder.cache_qk_out
+        self.cache_qkv_output = self.decoder.cache_qkv_out
 
         pred_actions = self.action_pred(x)
         self.cache_action_output = pred_actions

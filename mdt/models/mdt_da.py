@@ -602,6 +602,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         t_vs_dict: Dict[str, List[torch.Tensor]] = {}
         s_qs_dict: Dict[str, List[torch.Tensor]] = {}
         t_qs_dict: Dict[str, List[torch.Tensor]] = {}
+        s_qk_dict = {}
+        t_qk_dict = {}
+        s_qkv_dict = {}
+        t_qkv_dict = {}
 
         source_act_0 = None
         common_noise = None
@@ -659,6 +663,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 k_output = self.source_model.inner_model.cache_k_output  # [B,8,3,64]*6
                 v_output = self.source_model.inner_model.cache_v_output
                 q_output = self.source_model.inner_model.cache_q_output  # [B,8,10,64]*6
+                qk_output = self.source_model.inner_model.cache_qk_output  # (B,8,10,3)*6
+                qkv_output = self.source_model.inner_model.cache_qkv_output  # [B,10,512]
 
                 save_key = self.modality_scope[:-len('_source')]
                 s_latent_static_emb_dict[save_key] = s_perceptual_emb['static']  # (bs,1,512)
@@ -671,7 +677,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 s_ca_dict[save_key] = ca_output  # [B,10,512]*6
                 s_ks_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in k_output]  # (B,8,3,64)->(B,1536)
                 s_vs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in v_output]
-                s_qs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in q_output]
+                s_qs_dict[save_key] = [einops.rearrange(feat, 'b h t d -> b t (h d)') for feat in q_output]  # (B,8,10,64)->(B,10,512)
+                s_qk_dict[save_key] = qk_output
+                s_qkv_dict[save_key] = qkv_output  # [B,10,512]*6
 
             elif 'target' in self.modality_scope:
                 t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
@@ -700,6 +708,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 k_output = self.model.inner_model.cache_k_output
                 v_output = self.model.inner_model.cache_v_output
                 q_output = self.model.inner_model.cache_q_output
+                qk_output = self.model.inner_model.cache_qk_output
+                qkv_output = self.model.inner_model.cache_qkv_output
 
                 # Compute diffusion loss for DEBUG (DO NOT use in method!)
                 if self.debug_diff_loss:
@@ -747,7 +757,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 t_ca_dict[save_key] = ca_output # [B,10,512]*6
                 t_ks_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in k_output]  # (B,8,3,64)->(B,1536)
                 t_vs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in v_output]
-                t_qs_dict[save_key] = [feat.reshape(feat.shape[0], -1) for feat in q_output]  # (B,8,10,64)
+                t_qs_dict[save_key] = [einops.rearrange(feat, 'b h t d -> b t (h d)') for feat in q_output]  # (B,8,10,64)
+                t_qk_dict[save_key] = qk_output
+                t_qkv_dict[save_key] = qkv_output  # [B,10,512]*6
 
             else:
                 raise KeyError(f'[MDTDomainAdaptVisualEncoder] batch key:{self.modality_scope} not supported')
@@ -780,6 +792,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_vs_dict = sort_dict(s_vs_dict)
         t_qs_dict = sort_dict(t_qs_dict)
         s_qs_dict = sort_dict(s_qs_dict)
+        t_qk_dict = sort_dict(t_qk_dict)
+        s_qk_dict = sort_dict(s_qk_dict)
+        t_qkv_dict = sort_dict(t_qkv_dict)
+        s_qkv_dict = sort_dict(s_qkv_dict)
         t_pred_a0_dict = sort_dict(t_pred_a0_dict)
         s_pred_a0_dict = sort_dict(s_pred_a0_dict)
 
@@ -820,6 +836,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         s_v_for_da_act: List[torch.Tensor] = []  # 6*[(B,1536)]
         t_q_for_da_act: List[torch.Tensor] = []  # 6*[(B,5120)]
         s_q_for_da_act: List[torch.Tensor] = []
+        t_qk_for_da_act = []
+        s_qk_for_da_act = []
+        t_qkv_for_da_act = []
+        s_qkv_for_da_act = []
         num_layers = len(list(t_ks_dict.values())[0])
         for l_idx in range(num_layers):
             t_k_for_da_act.append(torch.cat([fs[l_idx] for fs in t_ks_dict.values()], dim=0))
@@ -828,6 +848,10 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             s_v_for_da_act.append(torch.cat([fs[l_idx] for fs in s_vs_dict.values()], dim=0))
             t_q_for_da_act.append(torch.cat([fs[l_idx] for fs in t_qs_dict.values()], dim=0))
             s_q_for_da_act.append(torch.cat([fs[l_idx] for fs in s_qs_dict.values()], dim=0))
+            t_qk_for_da_act.append(torch.cat([fs[l_idx] for fs in t_qk_dict.values()], dim=0))
+            s_qk_for_da_act.append(torch.cat([fs[l_idx] for fs in s_qk_dict.values()], dim=0))
+            t_qkv_for_da_act.append(torch.cat([fs[l_idx] for fs in t_qkv_dict.values()], dim=0))
+            s_qkv_for_da_act.append(torch.cat([fs[l_idx] for fs in s_qkv_dict.values()], dim=0))
 
         if self.debug_diff_loss:
             for l_idx in range(num_layers):
@@ -857,6 +881,12 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         if 'q' in self.act_loss_from:
             t_feat_for_da_act.extend(t_q_for_da_act[:former_layers])  # only last layer
             s_feat_for_da_act.extend(s_q_for_da_act[:former_layers])
+        if 'softmax' in self.act_loss_from:
+            t_feat_for_da_act.extend(t_qk_for_da_act[:former_layers])
+            s_feat_for_da_act.extend(s_qk_for_da_act[:former_layers])
+        if 'attn' in self.act_loss_from:
+            t_feat_for_da_act.extend(t_qkv_for_da_act[:former_layers])
+            s_feat_for_da_act.extend(s_qkv_for_da_act[:former_layers])
         if 'sa' in self.act_loss_from:
             t_feat_for_da_act.extend(t_sa_for_da_act)
             s_feat_for_da_act.extend(s_sa_for_da_act)

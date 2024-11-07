@@ -101,6 +101,8 @@ class Attention(nn.Module):
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(block_size, block_size))
                                         .view(1, 1, block_size, block_size), persistent=False)
+        # self.register_buffer("bias_da", torch.tril(torch.ones(block_size, 3))
+        #                      .view(1, 1, block_size, 3), persistent=False) # For DA loss
         self.use_rot_embed = use_rot_embed
         if self.use_rot_embed:
         # Update (12/2022): Rotary embedding has since been hugely successful, widely adopted in many large language models, including the largest in the world, PaLM. 
@@ -119,6 +121,8 @@ class Attention(nn.Module):
         self.cache_k_out = None
         self.cache_v_out = None
         self.cache_q_out = None
+        self.cache_qk_out = None
+        self.cache_qkv_out = None
 
     def forward(self, x, context=None, custom_attn_mask=None):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -161,7 +165,12 @@ class Attention(nn.Module):
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        # att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))  # no need causal for cross-attn
+        self.cache_qk_out = F.softmax(att, dim=-1)  # (B,nh,10,3)
+        self.cache_qkv_out = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        y = self.cache_qkv_out
 
         # output projection
         y = self.resid_dropout(self.c_proj(y))
@@ -306,6 +315,8 @@ class ConditionedBlock(Block):
         self.cache_k_out = None
         self.cache_v_out = None
         self.cache_q_out = None
+        self.cache_qk_out = None
+        self.cache_qkv_out = None
 
     def forward(self, x, c, context=None, custom_attn_mask=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_zero(c)
@@ -321,20 +332,18 @@ class ConditionedBlock(Block):
             if not self.has_adapter:
                 self.cache_ca_out = x + self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask)
             else:
-                self.cache_ca_out = x + self.ca_adapter(
-                    self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask))
+                self.cache_ca_out = x + self.cross_att(self.ln3(self.q_hyper(x)), context, custom_attn_mask=custom_attn_mask)
             x = self.cache_ca_out
             self.cache_k_out = self.cross_att.cache_k_out
             self.cache_v_out = self.cross_att.cache_v_out
             self.cache_q_out = self.cross_att.cache_q_out
+            self.cache_qk_out = self.cross_att.cache_qk_out
+            self.cache_qkv_out = self.cross_att.cache_qkv_out
         
         # MLP with modulation
         x_mlp = self.ln_2(x)
         x_mlp = modulate(x_mlp, shift_mlp, scale_mlp)
-        if not self.has_adapter:
-            x = x + gate_mlp * self.mlp(x_mlp)
-        else:
-            x = x + self.mlp_adapter(gate_mlp * self.mlp(x_mlp))
+        x = x + gate_mlp * self.mlp(x_mlp)
         
         return x
 
@@ -353,15 +362,32 @@ class ConditionedBlock(Block):
             def forward(self, x):
                 return x + self.ff_up(self.activation(self.ff_down(x)))
 
-        self.register_module('ca_adapter', BottleNeckAdapter(512))
-        self.register_module('mlp_adapter', BottleNeckAdapter(512))
+        class QHyper(nn.Module):
+            def __init__(self, in_dim=512, in_t=10):
+                super(QHyper, self).__init__()
+                self.conv1 = nn.Conv1d(in_dim, in_dim, 3, 1, 1, bias=False)
+                self.act1 = nn.ReLU()
+                self.conv2 = nn.Conv1d(in_dim, in_dim, 3, 1, 1, bias=False)
+                for m in self.modules():
+                    if isinstance(m, nn.Conv1d):
+                        nn.init.zeros_(m.weight)
+            def forward(self, x):  # (B,T,D)
+                x = x.transpose(1, 2)
+                h = self.conv1(x) + x
+                x = self.conv2(self.act1(h)) + h
+                return x.transpose(1, 2)
+
+        self.register_module('q_hyper', QHyper(512))
+        # self.register_module('ca_adapter', BottleNeckAdapter(512))
+        # self.register_module('mlp_adapter', BottleNeckAdapter(512))
 
     def unfreeze_adapter(self):
-        if not hasattr(self, 'ca_adapter'):
+        if not hasattr(self, 'q_hyper'):
             print("[Warning] Adapter not found! Now register it!")
             self.register_adapter()
-        self.ca_adapter.requires_grad_(True)
-        self.mlp_adapter.requires_grad_(True)
+        # self.ca_adapter.requires_grad_(True)
+        # self.mlp_adapter.requires_grad_(True)
+        self.q_hyper.requires_grad_(True)
 
     def unfreeze_cross_attention(self):
         if self.use_cross_attention:
@@ -634,6 +660,8 @@ class TransformerFiLMDecoder(nn.Module):
         self.cache_k_out = []
         self.cache_v_out = []
         self.cache_q_out = []
+        self.cache_qk_out = []
+        self.cache_qkv_out = []
 
     def forward(self, x, c, cond=None, custom_attn_mask=None):
         self.cache_sa_out = []
@@ -641,6 +669,8 @@ class TransformerFiLMDecoder(nn.Module):
         self.cache_k_out = []
         self.cache_v_out = []
         self.cache_q_out = []
+        self.cache_qk_out = []
+        self.cache_qkv_out = []
         for layer in self.blocks:
             x = layer(x, c, cond, custom_attn_mask=custom_attn_mask)
             if layer.cache_ca_out is not None:
@@ -651,6 +681,8 @@ class TransformerFiLMDecoder(nn.Module):
                 self.cache_k_out.append(layer.cache_k_out)
                 self.cache_v_out.append(layer.cache_v_out)
                 self.cache_q_out.append(layer.cache_q_out)
+                self.cache_qk_out.append(layer.cache_qk_out)
+                self.cache_qkv_out.append(layer.cache_qkv_out)
         x = self.ln(x)
         return x
 

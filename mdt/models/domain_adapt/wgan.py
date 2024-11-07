@@ -337,39 +337,68 @@ class DiscriminatorFiLM1d(nn.Module):
 
 
 class Discriminator2d(torch.nn.Module):
-    def __init__(self, in_dim: int, inner_dim: int, dropout=0.2, use_ada=False):
+    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False,
+                 ndim: int = 3, time_dim: int = 10,
+                 ):
         super(Discriminator2d, self).__init__()
-        self.conv_blocks = nn.ModuleList([
+        down_scale = min(4, in_dim // 64)
+        self.stem = nn.Sequential(
+            nn.Conv2d(1, inner_dim, (3, 4), (1, down_scale), 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(inner_dim, inner_dim * 2, (3, 4), (2, 4), 1, bias=False),
+        )
+        self.convs = nn.ModuleList([
             nn.Sequential(
-                nn.Conv1d(in_dim, inner_dim, 4, 2, 1, bias=False)),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(inner_dim * 2, inner_dim * 4, (3, 4), (2, 4), 1, bias=False),
+            ),
             nn.Sequential(
-                nn.Mish(inplace=True),
-                nn.Conv1d(inner_dim, inner_dim, 4, 2, 1, bias=False)),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(inner_dim * 4, inner_dim * 8, (1, 4), (1, 4), (0, 1), bias=False),
+            ),
             nn.Sequential(
-                nn.Mish(inplace=True),
-                nn.Conv1d(inner_dim, inner_dim * 2, 4, 2, 1, bias=False)),
-            nn.Sequential(
-                nn.Mish(inplace=True),
-                nn.Conv1d(inner_dim * 2, inner_dim * 2, 3, 1, 1, bias=False)),
+                nn.LeakyReLU(0.2, inplace=True),
+            ),
         ])
         self.norms = nn.ModuleList([
-            nn.BatchNorm1d(inner_dim),
-            nn.BatchNorm1d(inner_dim),
-            nn.BatchNorm1d(inner_dim * 2),
-            nn.BatchNorm1d(inner_dim * 2),
+            nn.BatchNorm2d(inner_dim * 2),
+            nn.BatchNorm2d(inner_dim * 4),
+            nn.BatchNorm2d(inner_dim * 8),
         ])
         self.dropout = nn.Dropout(dropout)
-        self.logit_out = nn.Linear(inner_dim * 2, 1, bias=False)
+        if in_dim < 256:
+            self.logit_out = nn.Linear(inner_dim * 8 * 1, 1, bias=False)
+        else:
+            self.logit_out = nn.Linear(inner_dim * 8 * (in_dim // 256) * 3, 1, bias=False)
+
+        self.use_ada = use_ada
+        if use_ada:
+            sigma_dim = 512 if not use_cond_dist else 512 * 2
+            self.cond_mapping = nn.ModuleList([
+                AdaLNZero(inner_dim * 2, in_dim=sigma_dim),
+                AdaLNZero(inner_dim * 4, in_dim=sigma_dim),
+                AdaLNZero(inner_dim * 8, in_dim=sigma_dim),
+            ])
+
         self.init_weight()
 
-    def forward(self, x, sigmas=None):  # x:(B,T,D), s:(B,10)
-        x = x.permute(0, 2, 1)  # (B,D,T)
-        for i in range(len(self.conv_blocks)):
-            x = self.conv_blocks[i](x)  # (B,D,T)
+    def forward(self, x, sigmas=None):  # x:(B,T,D), s:(B,512)
+        if x.ndim == 3:  # (B,T,D)
+            x = x.unsqueeze(1)  # (B,1,T,D)
+        x = self.stem(x)
+
+        for i in range(len(self.convs)):
             x = self.norms[i](x)
-        x = x.permute(0, 2, 1)  # (B,T,D)
-        x = x.squeeze(1)
-        return self.logit_out(self.dropout(x))
+            if self.use_ada: assert sigmas is not None
+            if sigmas is not None:
+                c_shift, c_scale, c_gate = self.cond_mapping[i](sigmas)  # sigma:(B,emb_dim)
+                c_shift, c_scale, c_gate = [c.unsqueeze(-1).unsqueeze(-1) for c in [c_shift, c_scale, c_gate]]
+                x = (1 - c_gate) * x + c_gate * (c_shift + x * (c_scale + 1.))
+            x = self.convs[i](x)
+
+        x = x.reshape(x.size(0), -1)
+        output = self.logit_out(self.dropout(x))
+        return output
 
     def init_weight(self):
         for m in self.modules():
@@ -378,6 +407,14 @@ class Discriminator2d(torch.nn.Module):
             elif isinstance(m, nn.BatchNorm1d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+        if self.use_ada:
+            for ada in self.cond_mapping:
+                ada.init_weight()
+
+    def calc_params(self):
+        num_params = sum(p.numel() for p in self.parameters())
+        ret_str = f"{num_params/1024/1024:.2f}M Params"
+        return ret_str
 
 
 class Discriminator2dSeqGAN(torch.nn.Module):
@@ -412,6 +449,84 @@ class Discriminator2dSeqGAN(torch.nn.Module):
         # out = F.log_softmax(self.fc(self.dropout(out)), dim=1)  # batch * num_classes
         out = self.fc(self.dropout(out))
         return out
+
+
+class Discriminator3d(torch.nn.Module):
+    def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False,
+                 ndim: int = 4, time_dim: int = 10,
+                 ):
+        super(Discriminator3d, self).__init__()
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_dim, inner_dim, (1, 1), (1, 1), 0, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(inner_dim, inner_dim * 2, (3, 3), (2, 1), 1, bias=False),
+        )
+        self.convs = nn.ModuleList([
+            nn.Sequential(
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(inner_dim * 2, inner_dim * 4, (3, 1), (2, 1), (1, 0), bias=False),
+            ),
+            nn.Sequential(
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(inner_dim * 4, inner_dim * 8, (3, 3), (2, 2), 1, bias=False),
+            ),
+            nn.Sequential(
+                nn.LeakyReLU(0.2, inplace=True),
+            ),
+        ])
+        self.norms = nn.ModuleList([
+            nn.BatchNorm2d(inner_dim * 2),
+            nn.BatchNorm2d(inner_dim * 4),
+            nn.BatchNorm2d(inner_dim * 8),
+        ])
+        self.dropout = nn.Dropout(dropout)
+        if in_dim < 256:
+            self.logit_out = nn.Linear(inner_dim * 8 * 4, 1, bias=False)
+        else:
+            self.logit_out = nn.Linear(inner_dim * 8 * (in_dim // 256) * 3, 1, bias=False)
+
+        self.use_ada = use_ada
+        if use_ada:
+            sigma_dim = 512 if not use_cond_dist else 512 * 2
+            self.cond_mapping = nn.ModuleList([
+                AdaLNZero(inner_dim * 2, in_dim=sigma_dim),
+                AdaLNZero(inner_dim * 4, in_dim=sigma_dim),
+                AdaLNZero(inner_dim * 8, in_dim=sigma_dim),
+            ])
+
+        self.init_weight()
+
+    def forward(self, x, sigmas=None):  # x:(B,Nh,T,Tc), s:(B,512)
+        if x.ndim == 3:  # (B,T,D)
+            x = x.unsqueeze(1)  # (B,1,T,D)
+        x = self.stem(x)
+        for i in range(len(self.convs)):
+            x = self.norms[i](x)
+            if self.use_ada: assert sigmas is not None
+            if sigmas is not None:
+                c_shift, c_scale, c_gate = self.cond_mapping[i](sigmas)  # sigma:(B,emb_dim)
+                c_shift, c_scale, c_gate = [c.unsqueeze(-1).unsqueeze(-1) for c in [c_shift, c_scale, c_gate]]
+                x = (1 - c_gate) * x + c_gate * (c_shift + x * (c_scale + 1.))
+            x = self.convs[i](x)
+        x = x.reshape(x.size(0), -1)
+        output = self.logit_out(self.dropout(x))
+        return output
+
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, (nn.Conv1d, nn.Linear)):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in')
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+        if self.use_ada:
+            for ada in self.cond_mapping:
+                ada.init_weight()
+
+    def calc_params(self):
+        num_params = sum(p.numel() for p in self.parameters())
+        ret_str = f"{num_params/1024/1024:.2f}M Params"
+        return ret_str
 
 
 from torch.autograd import grad
@@ -465,7 +580,9 @@ class WGAN_GP(torch.nn.Module):
         if ndim == 2:  # (B,D)
             return Discriminator1d(ndim=ndim, **kwargs)
         elif ndim == 3:  # (B,T,D)
-            return Discriminator1d(ndim=ndim, **kwargs)  # also use 1d
+            return Discriminator2d(ndim=ndim, **kwargs)
+        elif ndim == 4:  # (B,Nh,T,Tc)
+            return Discriminator3d(ndim=ndim, **kwargs)
         else:
             raise NotImplementedError(f"{ndim} not supported!")
 
