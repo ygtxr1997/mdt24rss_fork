@@ -290,7 +290,9 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 )
             else:
                 # Debug diff loss
-                # self.model.inner_model.freeze_backbone()  # using the same setting with da_act
+                self.model.inner_model.freeze_backbone(
+                    unfreeze_ca=unfreeze_ca, unfreeze_adapter=unfreeze_adapter
+                )  # using the same setting with da_act
                 pass  # finetuning all params
             g_act_optim_groups.extend([
                 {"params": self.model.inner_model.trainable_params(), "lr": self.optimizer_config.act_lr},

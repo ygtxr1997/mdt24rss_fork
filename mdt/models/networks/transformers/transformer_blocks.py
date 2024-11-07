@@ -62,6 +62,90 @@ class SwishGLU(nn.Module):
         return projected * self.act(gate)
 
 
+# For Domain Adaptation finetuning
+class BottleNeckAdapter(nn.Module):
+    def __init__(self, in_dim: int):
+        super(BottleNeckAdapter, self).__init__()
+        inner_dim = in_dim // 2
+        self.ff_down = nn.Linear(in_dim, inner_dim, bias=False)
+        self.activation = nn.GELU()
+        self.ff_up = nn.Linear(inner_dim, in_dim, bias=False)
+        torch.nn.init.normal_(self.ff_down.weight, std=0.02)
+        torch.nn.init.zeros_(self.ff_up.weight)
+    def forward(self, x):
+        return x + self.ff_up(self.activation(self.ff_down(x)))
+
+class QHyper(nn.Module):
+    def __init__(self, in_dim=512, in_t=10):
+        super(QHyper, self).__init__()
+        self.conv1 = nn.Conv1d(in_dim, in_dim, 3, 1, 1, bias=False)
+        self.act1 = nn.ReLU()
+        self.conv2 = nn.Conv1d(in_dim, in_dim, 3, 1, 1, bias=False)
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.zeros_(m.weight)
+    def forward(self, x):  # (B,T,D)
+        x = x.transpose(1, 2)
+        h = self.conv1(x) + x
+        x = self.conv2(self.act1(h)) + h
+        return x.transpose(1, 2)
+
+class SDHyperNet(torch.nn.Module):
+    multiplier = 1.0
+    activation_dict = {
+        "linear": torch.nn.Identity,
+        "relu": torch.nn.ReLU,
+        "leakyrelu": torch.nn.LeakyReLU,
+        "elu": torch.nn.ELU,
+        "swish": torch.nn.Hardswish,
+        "tanh": torch.nn.Tanh,
+        "sigmoid": torch.nn.Sigmoid,
+    }
+
+    def __init__(self, dim, state_dict=None, layer_structure=(1, 2, 1), activation_func="swish", weight_init='Normal', add_layer_norm=True, use_dropout=True):
+        super().__init__()
+
+        assert layer_structure is not None, "layer_structure must not be None"
+        assert layer_structure[0] == 1, "Multiplier Sequence should start with size 1!"
+        assert layer_structure[-1] == 1, "Multiplier Sequence should end with size 1!"
+
+        linears = []
+        for i in range(len(layer_structure) - 1):
+
+            # Add a fully-connected layer
+            linears.append(torch.nn.Linear(int(dim * layer_structure[i]), int(dim * layer_structure[i+1])))
+
+            # Add an activation func
+            if activation_func == "linear" or activation_func is None:
+                pass
+            elif activation_func in self.activation_dict:
+                linears.append(self.activation_dict[activation_func]())
+            else:
+                raise RuntimeError(f'hypernetwork uses an unsupported activation function: {activation_func}')
+
+            # Add layer normalization
+            if add_layer_norm:
+                linears.append(torch.nn.LayerNorm(int(dim * layer_structure[i+1])))
+
+            # Add dropout expect last layer
+            if use_dropout and i < len(layer_structure) - 3:
+                linears.append(torch.nn.Dropout(p=0.3))
+
+        self.linear = torch.nn.Sequential(*linears)
+
+        for layer in self.linear:
+            if type(layer) == torch.nn.Linear or type(layer) == torch.nn.LayerNorm:
+                w, b = layer.weight.data, layer.bias.data
+                if weight_init == "Normal" or type(layer) == torch.nn.LayerNorm:
+                    torch.nn.init.normal_(w, mean=0.0, std=0.01)
+                    torch.nn.init.normal_(b, mean=0.0, std=0.005)
+                else:
+                    raise KeyError(f"Key {weight_init} is not defined as initialization!")
+
+    def forward(self, x):
+        return x + self.linear(x) * self.multiplier
+
+
 
 class Attention(nn.Module):
 
@@ -118,6 +202,8 @@ class Attention(nn.Module):
                 interpolate_factor = rotary_interpolation_factor, 
             )
 
+        self.has_adapter = False
+
         self.cache_k_out = None
         self.cache_v_out = None
         self.cache_q_out = None
@@ -131,9 +217,15 @@ class Attention(nn.Module):
         # if the context is not None we do cross-attention othberwise self=attention
         # cross attention computes the query from x and the keys and values are from the context
         if context is not None:
-            k = self.key(context).view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
+            if not self.has_adapter:
+                context_k = self.key(context)
+                context_v = self.value(context)
+            else:
+                context_k = self.key(self.k_hyper(context))
+                context_v = self.value(self.v_hyper(context))
+            k = context_k.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
             q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-            v = self.value(context).view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
+            v = context_v.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
         else:
             k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
             q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
@@ -145,7 +237,6 @@ class Attention(nn.Module):
             k = self.rotary_pos_emb.rotate_queries_or_keys(k)
 
         if context is not None:
-            # TODO: cache k and v for ca
             self.cache_k_out = k
             self.cache_v_out = v
             self.cache_q_out = q
@@ -175,6 +266,12 @@ class Attention(nn.Module):
         # output projection
         y = self.resid_dropout(self.c_proj(y))
         return y
+
+    def register_adapter(self):
+        self.has_adapter = True
+
+        self.register_module('k_hyper', SDHyperNet(512))
+        self.register_module('v_hyper', SDHyperNet(512))
     
 
 class MLP(nn.Module):
@@ -350,36 +447,10 @@ class ConditionedBlock(Block):
     def register_adapter(self):
         self.has_adapter = True
 
-        class BottleNeckAdapter(nn.Module):
-            def __init__(self, in_dim: int):
-                super(BottleNeckAdapter, self).__init__()
-                inner_dim = in_dim // 2
-                self.ff_down = nn.Linear(in_dim, inner_dim, bias=False)
-                self.activation = nn.GELU()
-                self.ff_up = nn.Linear(inner_dim, in_dim, bias=False)
-                torch.nn.init.normal_(self.ff_down.weight, std=0.02)
-                torch.nn.init.zeros_(self.ff_up.weight)
-            def forward(self, x):
-                return x + self.ff_up(self.activation(self.ff_down(x)))
 
-        class QHyper(nn.Module):
-            def __init__(self, in_dim=512, in_t=10):
-                super(QHyper, self).__init__()
-                self.conv1 = nn.Conv1d(in_dim, in_dim, 3, 1, 1, bias=False)
-                self.act1 = nn.ReLU()
-                self.conv2 = nn.Conv1d(in_dim, in_dim, 3, 1, 1, bias=False)
-                for m in self.modules():
-                    if isinstance(m, nn.Conv1d):
-                        nn.init.zeros_(m.weight)
-            def forward(self, x):  # (B,T,D)
-                x = x.transpose(1, 2)
-                h = self.conv1(x) + x
-                x = self.conv2(self.act1(h)) + h
-                return x.transpose(1, 2)
 
-        self.register_module('q_hyper', QHyper(512))
-        # self.register_module('ca_adapter', BottleNeckAdapter(512))
-        # self.register_module('mlp_adapter', BottleNeckAdapter(512))
+        self.register_module('q_hyper', nn.Identity())
+        self.cross_att.register_adapter()
 
     def unfreeze_adapter(self):
         if not hasattr(self, 'q_hyper'):
@@ -387,7 +458,9 @@ class ConditionedBlock(Block):
             self.register_adapter()
         # self.ca_adapter.requires_grad_(True)
         # self.mlp_adapter.requires_grad_(True)
-        self.q_hyper.requires_grad_(True)
+        # self.q_hyper.requires_grad_(True)
+        self.cross_att.k_hyper.requires_grad_(True)
+        self.cross_att.v_hyper.requires_grad_(True)
 
     def unfreeze_cross_attention(self):
         if self.use_cross_attention:
