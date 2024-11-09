@@ -211,10 +211,10 @@ class MDTTransformer(nn.Module):
             param.requires_grad = False
         if "ca" in unfreeze_params:
             self.decoder.unfreeze_cross_attention()
-        if "adapter" in unfreeze_params:
-            self.decoder.unfreeze_adapter()
         if "mlp" in unfreeze_params:
             self.decoder.unfreeze_mlp()
+        if "adapter" in unfreeze_params:
+            self.decoder.unfreeze_adapter()
         cnt = 0
         for p in self.parameters():
             if p.requires_grad:

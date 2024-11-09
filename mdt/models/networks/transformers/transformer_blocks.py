@@ -221,8 +221,8 @@ class Attention(nn.Module):
                 context_k = self.key(context)
                 context_v = self.value(context)
             else:
-                context_k = self.key(self.k_hyper(context))
-                context_v = self.value(self.v_hyper(context))
+                context_k = self.key(context) * self.ia3_k
+                context_v = self.value(context) * self.ia3_v
             k = context_k.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
             q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
             v = context_v.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
@@ -270,8 +270,10 @@ class Attention(nn.Module):
     def register_adapter(self):
         self.has_adapter = True
 
-        self.register_module('k_hyper', SDHyperNet(512))
-        self.register_module('v_hyper', SDHyperNet(512))
+        # self.register_module('k_hyper', SDHyperNet(512))
+        # self.register_module('v_hyper', SDHyperNet(512))
+        self.register_parameter('ia3_k', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
+        self.register_parameter('ia3_v', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
     
 
 class MLP(nn.Module):
@@ -288,12 +290,22 @@ class MLP(nn.Module):
         self.c_proj  = nn.Linear(4 * n_embd, n_embd, bias=bias)
         self.dropout = nn.Dropout(dropout)
 
+        self.n_embd = n_embd
+        self.has_adapter = False
+
     def forward(self, x):
         x = self.c_fc(x)
         x = self.gelu(x)
-        x = self.c_proj(x)
+        if not self.has_adapter:
+            x = self.c_proj(x)
+        else:
+            x = self.c_proj(x * self.ia3_mlp)
         x = self.dropout(x)
         return x
+
+    def register_adapter(self):
+        self.has_adapter = True
+        self.register_parameter('ia3_mlp', nn.Parameter(torch.ones(4 * self.n_embd), requires_grad=True))
 
 
 class Block(nn.Module):
@@ -321,6 +333,7 @@ class Block(nn.Module):
             self.ln3 = nn.LayerNorm(n_embd)
         self.ln_2 = LayerNorm(n_embd, bias=bias)
         self.mlp = MLP(n_embd, bias, mlp_pdrop)
+        self.n_embd = n_embd
 
     def forward(self, x, context=None, custom_attn_mask=None):
         x = x + self.attn(self.ln_1(x), custom_attn_mask=custom_attn_mask)
@@ -427,10 +440,7 @@ class ConditionedBlock(Block):
         
         # Cross attention if used
         if self.use_cross_attention and context is not None:
-            if not self.has_adapter:
-                self.cache_ca_out = x + self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask)
-            else:
-                self.cache_ca_out = x + self.cross_att(self.ln3(self.q_hyper(x)), context, custom_attn_mask=custom_attn_mask)
+            self.cache_ca_out = x + self.cross_att(self.ln3(x), context, custom_attn_mask=custom_attn_mask)
             x = self.cache_ca_out
             self.cache_k_out = self.cross_att.cache_k_out
             self.cache_v_out = self.cross_att.cache_v_out
@@ -448,16 +458,20 @@ class ConditionedBlock(Block):
     def register_adapter(self):
         self.has_adapter = True
         self.cross_att.register_adapter()
+        self.mlp.register_adapter()
 
     def unfreeze_adapter(self):
-        if not hasattr(self.cross_att, 'k_hyper'):
+        if not self.cross_att.has_adapter:
             print("[Warning] Adapter not found! Now register it!")
             self.register_adapter()
         # self.ca_adapter.requires_grad_(True)
         # self.mlp_adapter.requires_grad_(True)
         # self.q_hyper.requires_grad_(True)
-        self.cross_att.k_hyper.requires_grad_(True)
-        self.cross_att.v_hyper.requires_grad_(True)
+        # self.cross_att.k_hyper.requires_grad_(True)
+        # self.cross_att.v_hyper.requires_grad_(True)
+        self.cross_att.ia3_k.requires_grad = True
+        self.cross_att.ia3_v.requires_grad = True
+        self.mlp.ia3_mlp.requires_grad = True
 
     def unfreeze_cross_attention(self):
         if self.use_cross_attention:
