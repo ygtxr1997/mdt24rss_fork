@@ -100,6 +100,7 @@ class MDTTransformer(nn.Module):
         self.cache_q_output = None
         self.cache_qk_output = None
         self.cache_qkv_output = None
+        self.cache_mlp_output = None
 
         if use_mlp_goal:
             self.goal_emb = nn.Sequential(
@@ -205,19 +206,20 @@ class MDTTransformer(nn.Module):
         for p in module.parameters():
             p.requires_grad = True
 
-    def freeze_backbone(self, unfreeze_ca: bool = True,
-                        unfreeze_adapter: bool = False):
+    def freeze_backbone(self, unfreeze_params: str):
         for name, param in self.named_parameters():
             param.requires_grad = False
-        if unfreeze_ca:
+        if "ca" in unfreeze_params:
             self.decoder.unfreeze_cross_attention()
-        if unfreeze_adapter:
+        if "adapter" in unfreeze_params:
             self.decoder.unfreeze_adapter()
+        if "mlp" in unfreeze_params:
+            self.decoder.unfreeze_mlp()
         cnt = 0
         for p in self.parameters():
             if p.requires_grad:
                 cnt += 1
-        print(f'[DEBUG] trainable: {cnt}, unfreeze_ca={unfreeze_ca}, unfreeze_adapter={unfreeze_adapter}')
+        print(f'[DEBUG] trainable: {cnt}, unfreeze_params={unfreeze_params}')
 
     def trainable_params(self):
         return filter(lambda p: p.requires_grad, self.parameters())
@@ -289,6 +291,7 @@ class MDTTransformer(nn.Module):
         self.cache_q_output = self.decoder.cache_q_out
         self.cache_qk_output = self.decoder.cache_qk_out
         self.cache_qkv_output = self.decoder.cache_qkv_out
+        self.cache_mlp_output = self.decoder.cache_mlp_out
 
         pred_actions = self.action_pred(x)
         self.cache_action_output = pred_actions

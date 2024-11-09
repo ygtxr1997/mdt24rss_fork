@@ -414,6 +414,7 @@ class ConditionedBlock(Block):
         self.cache_q_out = None
         self.cache_qk_out = None
         self.cache_qkv_out = None
+        self.cache_mlp_out = None
 
     def forward(self, x, c, context=None, custom_attn_mask=None):
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_zero(c)
@@ -441,19 +442,15 @@ class ConditionedBlock(Block):
         x_mlp = self.ln_2(x)
         x_mlp = modulate(x_mlp, shift_mlp, scale_mlp)
         x = x + gate_mlp * self.mlp(x_mlp)
-        
+        self.cache_mlp_out = x
         return x
 
     def register_adapter(self):
         self.has_adapter = True
-
-
-
-        self.register_module('q_hyper', nn.Identity())
         self.cross_att.register_adapter()
 
     def unfreeze_adapter(self):
-        if not hasattr(self, 'q_hyper'):
+        if not hasattr(self.cross_att, 'k_hyper'):
             print("[Warning] Adapter not found! Now register it!")
             self.register_adapter()
         # self.ca_adapter.requires_grad_(True)
@@ -466,13 +463,17 @@ class ConditionedBlock(Block):
         if self.use_cross_attention:
             # Train CA_ALL is better
             # self.attn.requires_grad_(True)
-            self.cross_att.requires_grad_(True)
-            # self.cross_att.key.requires_grad_(True)
-            # self.cross_att.value.requires_grad_(True)
+            # self.cross_att.requires_grad_(True)
+            self.cross_att.key.requires_grad_(True)
+            self.cross_att.value.requires_grad_(True)
             # self.attn.value.requires_grad_(True)
             # self.mlp.requires_grad_(True)
             return True
         return False
+
+    def unfreeze_mlp(self):
+        self.mlp.requires_grad_(True)
+        return True
 
 
 class NoiseBlock(Block):
@@ -735,6 +736,7 @@ class TransformerFiLMDecoder(nn.Module):
         self.cache_q_out = []
         self.cache_qk_out = []
         self.cache_qkv_out = []
+        self.cache_mlp_out = []
 
     def forward(self, x, c, cond=None, custom_attn_mask=None):
         self.cache_sa_out = []
@@ -744,6 +746,7 @@ class TransformerFiLMDecoder(nn.Module):
         self.cache_q_out = []
         self.cache_qk_out = []
         self.cache_qkv_out = []
+        self.cache_mlp_out = []
         for layer in self.blocks:
             x = layer(x, c, cond, custom_attn_mask=custom_attn_mask)
             if layer.cache_ca_out is not None:
@@ -756,6 +759,7 @@ class TransformerFiLMDecoder(nn.Module):
                 self.cache_q_out.append(layer.cache_q_out)
                 self.cache_qk_out.append(layer.cache_qk_out)
                 self.cache_qkv_out.append(layer.cache_qkv_out)
+                self.cache_mlp_out.append(layer.cache_mlp_out)
         x = self.ln(x)
         return x
 
@@ -779,6 +783,13 @@ class TransformerFiLMDecoder(nn.Module):
             has_cross_attn = block.unfreeze_cross_attention()
             if has_cross_attn: unfrozen_cnt += 1
         print('[DEBUG] unfrozen_cross_attention_blocks:', unfrozen_cnt)
+
+    def unfreeze_mlp(self):
+        unfrozen_cnt = 0
+        for block in self.blocks:
+            has_cross_attn = block.unfreeze_mlp()
+            if has_cross_attn: unfrozen_cnt += 1
+        print('[DEBUG] unfrozen_mlps:', unfrozen_cnt)
 
 
 class TransformerFiLMDecoderInterleaved(nn.Module):
