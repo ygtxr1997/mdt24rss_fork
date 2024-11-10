@@ -10,7 +10,7 @@ action_da:
   _target_: mdt.models.domain_adapt.wgan.WGAN_GP
   in_dim: "512*6,"  # ori:`1536*12`, kv:(1536,2), q/mlp:(512,3), attn:(512,3), softmax:(8,4)
   in_ndim: "3*6,"  # ori:`2*12`
-  gamma: 10
+  gamma: 1  # ori:10
   num_layers: 6  # v:6 layers, k:6 layers
   use_ada: true
   use_cond_dist: false
@@ -19,4 +19,4 @@ use_da_visual: 'both'  # static,gripper,both,false
 use_da_act: true
 act_loss_from: "mlp"  # ori:`k,v`, choices:`k`,`v`,`q`,`sa`,`ca`,`attn`,`softmax`,`mlp`
 act_layers: 6  # ori:6
-act_weights: "adapter"  # ori:`ca`, choices:`ca`,`adapter`,`mlp`
+act_weights: "ca"  # ori:`ca`, choices:`ca`,`adapter`,`mlp`

@@ -77,6 +77,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             debug_tsne: bool = False,
             shuffle_target_goal: bool = True,
             cfg_drop_ratio: float = 0.,
+            reg_source_diff_loss: bool = False,
     ):
         super(MDTDomainAdaptVisualEncoder, self).__init__()
         self.automatic_optimization = False  # manually backward
@@ -147,7 +148,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.use_da_vis2: bool = domain_adapt.use_da_visual in ('both', 'gripper')
         self.use_da_act: bool = domain_adapt.use_da_act
         self.act_loss_from: str = domain_adapt.act_loss_from
-        self.act_layers: str = domain_adapt.act_layers
+        self.act_layers: int = domain_adapt.act_layers
         self.act_weights: str = domain_adapt.act_weights
         # Register Adapter blocks for trainable modules
         if 'adapter' in domain_adapt.act_weights:
@@ -165,6 +166,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         self.cache_da_g_loss = 0.
         self.shuffle_target_goal = shuffle_target_goal
         self.cfg_drop_ratio = cfg_drop_ratio
+        self.reg_source_diff_loss = reg_source_diff_loss
         # For visualization
         self.cache_s_vis1 = []
         self.cache_t_vis1 = []
@@ -687,6 +689,20 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 s_qkv_dict[save_key] = qkv_output  # [B,10,512]*6
                 s_mlp_dict[save_key] = mlp_out
 
+                if self.reg_source_diff_loss > 0.:
+                    # DEBUG: train target with source data
+                    t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
+                        dataset_batch, is_target=True)
+                    # t_perceptual_emb = {k: v.clone.detach() for k, v in t_perceptual_emb.items()}
+                    diff_loss, sigmas, noise, pred_a0 = self.diffusion_loss(
+                        t_perceptual_emb,
+                        latent_goal,
+                        dataset_batch['actions'],
+                        is_target=True,
+                        is_da=False,
+                    )
+                    losses['action_loss'] += diff_loss * self.reg_source_diff_loss
+
             elif 'target' in self.modality_scope:
                 t_perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(
                     dataset_batch, is_target=True)
@@ -883,27 +899,30 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 half_shape = s_q.shape[0] // 2
                 self.log_kl_loss(s_q[:half_shape], s_q[half_shape:], f'source_q_layer{l_idx:02d}', total_bs)
 
-        former_layers = self.act_layers
+        if self.act_layers < 0:
+            left, right = self.act_layers, None
+        else:
+            left, right = None, self.act_layers
         t_feat_for_da_act = []
         s_feat_for_da_act = []
         if 'v' in self.act_loss_from:
-            t_feat_for_da_act.extend(t_v_for_da_act[:former_layers])
-            s_feat_for_da_act.extend(s_v_for_da_act[:former_layers])
+            t_feat_for_da_act.extend(t_v_for_da_act[left:right])
+            s_feat_for_da_act.extend(s_v_for_da_act[left:right])
         if 'k' in self.act_loss_from:
-            t_feat_for_da_act.extend(t_k_for_da_act[:former_layers])
-            s_feat_for_da_act.extend(s_k_for_da_act[:former_layers])
+            t_feat_for_da_act.extend(t_k_for_da_act[left:right])
+            s_feat_for_da_act.extend(s_k_for_da_act[left:right])
         if 'q' in self.act_loss_from:
-            t_feat_for_da_act.extend(t_q_for_da_act[:former_layers])  # only last layer
-            s_feat_for_da_act.extend(s_q_for_da_act[:former_layers])
+            t_feat_for_da_act.extend(t_q_for_da_act[left:right])  # only last layer
+            s_feat_for_da_act.extend(s_q_for_da_act[left:right])
         if 'softmax' in self.act_loss_from:
-            t_feat_for_da_act.extend(t_qk_for_da_act[:former_layers])
-            s_feat_for_da_act.extend(s_qk_for_da_act[:former_layers])
+            t_feat_for_da_act.extend(t_qk_for_da_act[left:right])
+            s_feat_for_da_act.extend(s_qk_for_da_act[left:right])
         if 'attn' in self.act_loss_from:
-            t_feat_for_da_act.extend(t_qkv_for_da_act[:former_layers])
-            s_feat_for_da_act.extend(s_qkv_for_da_act[:former_layers])
+            t_feat_for_da_act.extend(t_qkv_for_da_act[left:right])
+            s_feat_for_da_act.extend(s_qkv_for_da_act[left:right])
         if 'mlp' in self.act_loss_from:
-            t_feat_for_da_act.extend(t_mlp_for_da_act[:former_layers])
-            s_feat_for_da_act.extend(s_mlp_for_da_act[:former_layers])
+            t_feat_for_da_act.extend(t_mlp_for_da_act[left:right])
+            s_feat_for_da_act.extend(s_mlp_for_da_act[left:right])
         if 'sa' in self.act_loss_from:
             t_feat_for_da_act.extend(t_sa_for_da_act)
             s_feat_for_da_act.extend(s_sa_for_da_act)
@@ -1088,7 +1107,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             g_act_opt.zero_grad()
             retain_graph = self.use_da_vis1 or self.use_da_vis2  # Keep backward graph for later modules
             if not self.debug_diff_loss:
-                self.manual_backward(losses['da_g_act_loss'], retain_graph=retain_graph)
+                act_back_loss = losses['da_g_act_loss'] + losses['action_loss']
+                self.manual_backward(act_back_loss, retain_graph=retain_graph)
             elif self.current_epoch >= 1 or batch_idx > 10:  # Only for debug
                 self.manual_backward(backward_loss)
             g_act_opt.step()
