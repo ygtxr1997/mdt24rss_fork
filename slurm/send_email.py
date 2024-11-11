@@ -21,7 +21,7 @@ qqMail = smtplib.SMTP_SSL("smtp.qq.com", 465)
 # 设置登录邮箱的帐号为："zhangxiaofan@qq.com"，赋值给mailUser
 mailUser = "553159409@qq.com"
 # 将邮箱授权码"xxxxx"，赋值给mailPass
-mailPass = "yoxwatwwjliubedg"
+mailPass = "qolbhicbsddtbebi"
 # 登录邮箱：调用对象qqMail的login()方法，传入邮箱账号和授权码
 qqMail.login(mailUser, mailPass)
 

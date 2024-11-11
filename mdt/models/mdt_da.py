@@ -6,7 +6,6 @@ import copy
 
 import torch
 import torch.nn as nn
-from litdata.processing.utilities import catch
 from torch.nn import functional as F
 import numpy as np
 import hydra
@@ -854,7 +853,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         # exit()
 
         t_pred_a0_for_da_act = torch.cat([v for v in t_pred_a0_dict.values()], dim=0)
-        s_pred_a0_for_da_act = torch.cat([v for v in s_pred_a0_dict.values()], dim=0)
+        s_pred_a0_for_da_act = torch.cat([v for v in s_pred_a0_dict.values()], dim=0)  # (B,10,7)
 
         t_k_for_da_act: List[torch.Tensor] = []
         s_k_for_da_act: List[torch.Tensor] = []

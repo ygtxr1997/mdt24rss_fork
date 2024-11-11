@@ -1,3 +1,4 @@
+import einops
 import torch
 import torch.nn as nn
 from sympy import discriminant
@@ -177,19 +178,6 @@ class Discriminator1d(torch.nn.Module):
             nn.BatchNorm1d(inner_dim * 4),
             nn.BatchNorm1d(inner_dim * 8),
         ])
-        # self.backbone = nn.Sequential(
-        #     nn.Conv1d(1, inner_dim, 4, 4, 1, bias=False),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Conv1d(inner_dim, inner_dim * 2, 4, 4, 1, bias=False),
-        #     nn.BatchNorm1d(inner_dim * 2),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Conv1d(inner_dim * 2, inner_dim * 4, 4, 4, 1, bias=False),
-        #     nn.BatchNorm1d(inner_dim * 4),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        #     nn.Conv1d(inner_dim * 4, inner_dim * 8, 4, 4, 1, bias=False),
-        #     nn.BatchNorm1d(inner_dim * 8),
-        #     nn.LeakyReLU(0.2, inplace=True),
-        # )
         self.dropout = nn.Dropout(dropout)
         if in_dim < 256:
             self.logit_out = nn.Linear(inner_dim * 8 * 1, 1, bias=False)
@@ -210,6 +198,11 @@ class Discriminator1d(torch.nn.Module):
     def forward(self, x, sigmas=None):  # x:(B,D), s:(B,512)
         if x.ndim == 2:  # (B,D)
             x = x.unsqueeze(1)  # (B,1,D)
+        elif x.ndim == 3:  # (B,T,D)
+            if sigmas is not None:
+                sigmas = einops.repeat(sigmas, "b d -> (b t) d", t=x.shape[1])  # (B*T,D)
+            x = x.reshape(-1, x.shape[-1])  # remove time dimension, (B*T,D)
+            x = x.unsqueeze(1)  # (B*T,1,D)
         x = self.stem(x)
 
         for i in range(len(self.convs)):
@@ -402,9 +395,9 @@ class Discriminator2d(torch.nn.Module):
 
     def init_weight(self):
         for m in self.modules():
-            if isinstance(m, (nn.Conv1d, nn.Linear)):
+            if isinstance(m, (nn.Conv1d, nn.Conv2d, nn.Linear)):
                 nn.init.kaiming_normal_(m.weight, mode='fan_in')
-            elif isinstance(m, nn.BatchNorm1d):
+            elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
         if self.use_ada:
