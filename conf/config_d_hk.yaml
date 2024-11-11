@@ -1,7 +1,7 @@
 defaults:
   - callbacks: calvin
   - datamodule: calvin_da  # ori:calvin, ours:calvin_clear
-  - model: mdt_gradually_add # or use mdt_agent
+  - model: edm_dp_agent  # or use mdt_agent
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
@@ -37,7 +37,7 @@ max_epochs: 20
 rollout_lh_skip_epochs: 0
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
-num_workers: 12
+num_workers: 8
 img_gen_frame_diff: 3
 use_extracted_rel_actions: true
 benchmark_name: calvin_d
@@ -56,7 +56,7 @@ logger:
   _target_: pytorch_lightning.loggers.WandbLogger
   save_dir: .
   name: logger
-  group: mdt
+  group: edm_dp
   log_model: false
   project: ${benchmark_name} # calvin_vision
   entity: gavinyuan

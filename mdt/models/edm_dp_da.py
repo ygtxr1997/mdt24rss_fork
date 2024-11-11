@@ -6,6 +6,7 @@ import copy
 
 import torch
 import torch.nn as nn
+from litdata.processing.utilities import catch
 from torch.nn import functional as F
 import numpy as np
 import hydra
@@ -41,7 +42,7 @@ def print_model_parameters(model):
                 print(f"{name} - Total Params: {submodule_params}")
 
 
-class MDTDomainAdaptVisualEncoder(pl.LightningModule):
+class EDMDPDomainAdapt(pl.LightningModule):
     """
     The lightning module used for training.
     """
@@ -79,15 +80,15 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             reg_source_diff_loss: bool = False,
             use_dann_lambda: bool = False,
     ):
-        super(MDTDomainAdaptVisualEncoder, self).__init__()
+        super(EDMDPDomainAdapt, self).__init__()
         self.automatic_optimization = False  # manually backward
-        print('[MDTDomainAdaptVisualEncoder] Set automatic optimization to False!')
+        print('[EDMDPDomainAdapt] Set automatic optimization to False!')
         self.latent_dim = latent_dim
         img_gen['context_dim'] = self.latent_dim
         self.static_resnet = BesoResNetEncoder(self.latent_dim)
         self.gripper_resnet = BesoResNetEncoder(self.latent_dim)
         self.act_window_size = act_window_size
-        self.gen_img = hydra.utils.instantiate(img_gen).to(self.device)
+        self.gen_img = NoEncoder()  # placeholder, remove img_gen loss
         self.seed = seed
         self.use_lr_scheduler = use_lr_scheduler
         # goal encoders
@@ -136,7 +137,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             self.load_pretrained_parameters(ckpt_path)
         else:
             pass
-            # raise ValueError('[MDTDomainAdaptVisualEncoder] ckpt_path must be provided!')
+            # raise ValueError('[EDMDPDomainAdapt] ckpt_path must be provided!')
 
         # Create model copies for domain adaptation AFTER loading pretrained weights
         self.source_static_resnet = copy.deepcopy(self.static_resnet)
@@ -202,7 +203,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         print("Loading pretrained parameters")
         checkpoint_data = torch.load(ckpt_path)
         '''if 'callbacks'''
-        if "ema_weights" in checkpoint_data['callbacks']['EMA']:
+        if checkpoint_data['callbacks'].get("EMA") is not None and "ema_weights" in checkpoint_data['callbacks']['EMA']:
             ema_weights_list = checkpoint_data['callbacks']['EMA']['ema_weights']
 
             # Model's params dict
@@ -229,7 +230,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                   f"missing: {missing_keys}, unexpected: {unexpected_keys}")
         else:
             self.load_state_dict(checkpoint_data['state_dict'])
-        print("Successfully loaded weights from checkpoint!")
+            print("Successfully loaded weights from checkpoint!")
 
     def configure_optimizers(self):
         """
@@ -299,7 +300,6 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 pass  # finetuning all params
             g_act_optim_groups.extend([
                 {"params": self.model.inner_model.trainable_params(), "lr": self.optimizer_config.act_lr},
-                # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             ])
         else:
             g_act_optim_groups.extend([{"params": self.placeholder_param, "lr": 0.}])  # placeholder
@@ -746,30 +746,6 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                     )
                     losses['action_loss'] += diff_loss
 
-                # # Compute the masked generative foresight loss (only for target)
-                # if not isinstance(self.gen_img, NoEncoder):
-                #     rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
-                #     rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
-                #     img_gen_frame_diff = dataset_batch[
-                #         'future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
-                #     # combine both goal images
-                #     rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
-                #     img_gen_embed = latent_encoder_emb
-                #     img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
-                #                                                   img_gen_frame_diff=img_gen_frame_diff)
-                #     img_gen_loss += img_gen_loss_part * self.masked_beta
-
-                # # Compute the Contrastive Latent Alignment Loss (only for target)
-                # cont_loss_part = self.compute_contrastive_loss(
-                #     t_perceptual_emb,
-                #     latent_goal,
-                #     image_latent_goal,
-                #     dataset_batch,
-                #     sigmas,
-                #     noise
-                # )
-                # cont_loss += self.cont_alpha * cont_loss_part
-
                 save_key = self.modality_scope[:-len('_target')]
                 t_latent_static_emb_dict[save_key] = t_perceptual_emb['static']  # (bs,1,512)
                 t_latent_gripper_emb_dict[save_key] = t_perceptual_emb['gripper']
@@ -787,7 +763,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
                 t_mlp_dict[save_key] = mlp_out
 
             else:
-                raise KeyError(f'[MDTDomainAdaptVisualEncoder] batch key:{self.modality_scope} not supported')
+                raise KeyError(f'[EDMDPDomainAdapt] batch key:{self.modality_scope} not supported')
 
             batch_size[self.modality_scope] = dataset_batch["actions"].shape[0]
             total_bs += dataset_batch["actions"].shape[0]
@@ -855,7 +831,7 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         # exit()
 
         t_pred_a0_for_da_act = torch.cat([v for v in t_pred_a0_dict.values()], dim=0)
-        s_pred_a0_for_da_act = torch.cat([v for v in s_pred_a0_dict.values()], dim=0)  # (B,10,7)
+        s_pred_a0_for_da_act = torch.cat([v for v in s_pred_a0_dict.values()], dim=0)
 
         t_k_for_da_act: List[torch.Tensor] = []
         s_k_for_da_act: List[torch.Tensor] = []
@@ -957,12 +933,12 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             self.cache_s_ca.append([x.detach().float().cpu().reshape(bs, -1).numpy() for x in s_ca_dict[t_key]])
 
             # Only show the 1st/3rd/last layer
-            self.cache_t_k.append(t_ks_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_s_k.append(s_ks_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_t_v.append(t_vs_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_s_v.append(s_vs_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_t_q.append(t_qs_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
-            self.cache_s_q.append(s_qs_dict[t_key][3].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_k.append(t_ks_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_k.append(s_ks_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_v.append(t_vs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_v.append(s_vs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_t_q.append(t_qs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
+            self.cache_s_q.append(s_qs_dict[t_key][-1].detach().float().cpu().reshape(bs, -1).numpy())
 
         from mdt.datasets.utils.debug_utils import TSNEHelper
         if self.debug_tsne and (os.environ.get("LOCAL_RANK", "0") == "0" and batch_idx % 200 == 100 and
@@ -1204,25 +1180,8 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
             latent_encoder_emb = self.model.inner_model.latent_encoder_emb
             val_total_act_loss_pp += pred_loss
 
-            # next compute the image generation loss
-            if not isinstance(self.gen_img, NoEncoder):
-                rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
-                rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
-                img_gen_frame_diff = dataset_batch['future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
-                # combine both goal images
-                rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
-
-                img_gen_embed = latent_encoder_emb
-
-                img_gen_loss = self.compute_img_gen_loss(
-                    img_gen_embed,
-                    rgb_pred_goal,
-                    store_img=False,
-                    batch_idx=batch_idx,
-                    img_gen_frame_diff=img_gen_frame_diff,
-                )
-            else:
-                img_gen_loss = torch.tensor(0.0).to(self.device)
+            # next compute the image generation loss (removed for edm_dp)
+            img_gen_loss = torch.tensor(0.0).to(self.device)
 
             self._log_validation_metrics(pred_loss, img_gen_loss, val_total_act_loss_pp)
 
@@ -1289,80 +1248,6 @@ class MDTDomainAdaptVisualEncoder(pl.LightningModule):
         noised_input = actions + noise * append_dims(sigmas, actions.ndim)
         context = self.model.forward_context_only(perceptual_emb, noised_input, latent_goal, sigmas)
         return context
-
-    def compute_img_gen_loss(self, latent_embeddings, goal_img, store_img=False, img_gen_frame_diff=3, batch_idx=0):
-        """
-        Compute the image generation loss based on the provided embeddings and dataset batch.
-        """
-        if len(goal_img.shape) == 5:
-            goal_img = goal_img.squeeze(1)
-            # the goal is not to reconstruct all the details but to get the general shape
-        # 1. predict the future image patches
-        img_gen_pred, mask, restore_idxs, visible_patches = self.gen_img(latent_embeddings, goal_img,
-                                                                         img_gen_frame_diff)
-        # 2. compute the loss
-        img_gen_loss = self.gen_img.compute_loss(goal_img, img_gen_pred, mask, restore_idxs)
-        if store_img:
-            file_path = os.getcwd() + f'/img_gen_pred_{batch_idx}.png'
-            self.gen_img.reconstruct_image(
-                predictions=img_gen_pred,
-                goal_images=goal_img,
-                mask=mask,
-                restore_idxs=restore_idxs,
-                file_path=file_path,
-            )
-            try:
-                self.logger.experiment.log({f"generated_img_{batch_idx}": wandb.Image(os.path.abspath(file_path))})
-            except Exception as e:
-                print(f"An error occurred while saving or logging image: {e}")
-                # Optionally, you can log the error to wandb as well
-                self.logger.experiment.log({"error": str(e)})
-
-        return img_gen_loss
-
-    def compute_contrastive_loss(self, perceptual_emb, latent_goal, image_latent_goal, dataset_batch, sigma, noise):
-        """
-        Compute the contrastive loss based on the provided embeddings and dataset batch.
-        """
-        if "lang" in self.modality_scope:
-            latent_language_embed = self.model.inner_model.latent_encoder_emb
-
-            latent_vis_embed = self.clip_extra_forward(
-                perceptual_emb,
-                image_latent_goal,
-                dataset_batch["actions"],
-                sigma,  # Assuming you don't need sigmas and noise here
-                noise
-            )
-            latent_language_embed = self.clip_proj(latent_language_embed)
-            latent_vis_embed = self.clip_proj(latent_vis_embed)
-
-            is_distributed = self.trainer.global_rank >= 0 and dist.is_initialized()
-
-            if is_distributed and self.use_distributed_clip:
-
-                all_latent_vis_embed = self.all_gather(latent_vis_embed, sync_grads=True)
-                all_latent_language_embed = self.all_gather(latent_language_embed, sync_grads=True)
-                all_latent_language_embed = einops.rearrange(all_latent_language_embed, 'n b d -> (n b) d')
-                all_latent_vis_embed = einops.rearrange(all_latent_vis_embed, 'n b d -> (n b) d')
-
-            else:
-                all_latent_vis_embed = latent_vis_embed
-                all_latent_language_embed = latent_language_embed
-
-            lang_text = dataset_batch["lang_text"] if "lang_text" in dataset_batch else None
-
-            # Compute contrastive loss with gathered embeddings
-            cont_loss_part = self.cont_loss(
-                all_latent_vis_embed,
-                all_latent_language_embed,
-                mode=self.clip_loss_type,
-                lang_text=lang_text
-            )
-
-            return cont_loss_part
-        else:
-            return torch.tensor(0.0).to(self.device)  # Return a zero tensor if "lang" is not in the modality scope
 
     def _log_training_metrics(self, log_dict, total_bs):
         """

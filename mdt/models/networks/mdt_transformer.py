@@ -122,18 +122,21 @@ class MDTTransformer(nn.Module):
         else:
             self.lang_emb = self.goal_emb
 
-        self.encoder = TransformerEncoder(
-            embed_dim=embed_dim,
-            n_heads=n_heads,
-            attn_pdrop=attn_pdrop,
-            resid_pdrop=resid_pdrop,
-            n_layers=n_enc_layers,
-            block_size=block_size,
-            bias=bias,
-            use_rot_embed=use_rot_embed,
-            rotary_xpos=rotary_xpos,
-            mlp_pdrop=mlp_pdrop,
-        )
+        if n_enc_layers > 0:
+            self.encoder = TransformerEncoder(
+                embed_dim=embed_dim,
+                n_heads=n_heads,
+                attn_pdrop=attn_pdrop,
+                resid_pdrop=resid_pdrop,
+                n_layers=n_enc_layers,
+                block_size=block_size,
+                bias=bias,
+                use_rot_embed=use_rot_embed,
+                rotary_xpos=rotary_xpos,
+                mlp_pdrop=mlp_pdrop,
+            )
+        else:
+            self.encoder = nn.Identity()
 
         if self.use_ada_conditioning:
             self.decoder = TransformerFiLMDecoder(

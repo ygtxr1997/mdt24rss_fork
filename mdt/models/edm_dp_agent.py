@@ -40,7 +40,7 @@ def print_model_parameters(model):
                 print(f"{name} - Total Params: {submodule_params}")
 
 
-class MDTAgent(pl.LightningModule):
+class EDMDPAgent(pl.LightningModule):
     """
     The lightning module used for training.
     """
@@ -70,17 +70,14 @@ class MDTAgent(pl.LightningModule):
             use_text_not_embedding: bool = False,
             ckpt_path=None,
             seed: int = 42,
-            # DA used
-            manually_backward: bool = False,
     ):
-        super(MDTAgent, self).__init__()
-        self.automatic_optimization = not manually_backward  # manually backward
+        super(EDMDPAgent, self).__init__()
         self.latent_dim = latent_dim
         img_gen['context_dim'] = self.latent_dim
         self.static_resnet = BesoResNetEncoder(self.latent_dim)
         self.gripper_resnet = BesoResNetEncoder(self.latent_dim)
         self.act_window_size = act_window_size
-        self.gen_img = hydra.utils.instantiate(img_gen).to(self.device)
+        self.gen_img = NoEncoder()  # placeholder, remove img_gen loss
         self.seed = seed
         self.use_lr_scheduler = use_lr_scheduler
         # goal encoders
@@ -159,7 +156,7 @@ class MDTAgent(pl.LightningModule):
         ]
         optim_groups.extend([
             # {"params": self.visual_goal.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
-            {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.static_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.gripper_resnet.parameters(),
              "weight_decay": self.optimizer_config.transformer_weight_decay},
@@ -221,15 +218,6 @@ class MDTAgent(pl.LightningModule):
         Returns:
             loss tensor
         """
-        batch = {
-            'vis': batch['vis_target'],
-            'lang': batch['lang_target'],
-        }
-        # g_opt = self.optimizers(use_pl_optimizer=False)
-        g_opt = self.optimizers(use_pl_optimizer=False)  # BUG: If False, val_acc% is zero
-
-        opt = g_opt
-
         total_loss, action_loss, cont_loss, id_loss, img_gen_loss = (
             torch.tensor(0.0).to(self.device),
             torch.tensor(0.0).to(self.device),
@@ -252,7 +240,7 @@ class MDTAgent(pl.LightningModule):
             )
             latent_encoder_emb = self.model.inner_model.latent_encoder_emb
 
-            # Compute the masked generative foresight loss
+            # Compute the masked generative foresight loss (removed for edm diffusion policy)
             if not isinstance(self.gen_img, NoEncoder):
                 rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
                 rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
@@ -264,18 +252,19 @@ class MDTAgent(pl.LightningModule):
                                                               img_gen_frame_diff=img_gen_frame_diff)
                 img_gen_loss += img_gen_loss_part * self.masked_beta
                 total_loss += img_gen_loss_part * self.masked_beta
-            # use contrastive loss
-            # Compute the Contrastive Latent Alignment Loss
-            cont_loss_part = self.compute_contrastive_loss(
-                perceptual_emb,
-                latent_goal,
-                image_latent_goal,
-                dataset_batch,
-                sigmas,
-                noise
-            )
-            cont_loss += self.cont_alpha * cont_loss_part
-            total_loss += self.cont_alpha * cont_loss_part
+
+            # # use contrastive loss (removed for edm diffusion policy)
+            # # Compute the Contrastive Latent Alignment Loss
+            # cont_loss_part = self.compute_contrastive_loss(
+            #     perceptual_emb,
+            #     latent_goal,
+            #     image_latent_goal,
+            #     dataset_batch,
+            #     sigmas,
+            #     noise
+            # )
+            # cont_loss += self.cont_alpha * cont_loss_part
+            # total_loss += self.cont_alpha * cont_loss_part
 
             action_loss += act_loss
             total_loss += act_loss
@@ -290,15 +279,8 @@ class MDTAgent(pl.LightningModule):
         img_gen_loss = img_gen_loss / batch_len
 
         # Log the metrics
-        if not self.automatic_optimization:
-            self.on_before_zero_grad()
+        # self.on_before_zero_grad()
         self._log_training_metrics(action_loss, total_loss, cont_loss, img_gen_loss, total_bs)
-
-        if not self.automatic_optimization:
-            opt.zero_grad()
-            self.manual_backward(total_loss)
-            opt.step()
-
         return total_loss
 
     @torch.no_grad()
@@ -318,10 +300,6 @@ class MDTAgent(pl.LightningModule):
             episode indices.
         """
         output = {}
-        batch = {
-            'vis': batch['vis_target'],
-            'lang': batch['lang_target'],
-        }
         val_total_act_loss_pp = torch.tensor(0.0).to(self.device)
         for self.modality_scope, dataset_batch in batch.items():
             # Compute the required embeddings
@@ -495,10 +473,10 @@ class MDTAgent(pl.LightningModule):
         """
         Log the training metrics.
         """
-        self.log("train/action_loss", action_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/total_loss", total_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/cont_loss", cont_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
-        self.log("train/img_gen_loss", img_gen_loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=total_bs)
+        self.log("train/action_loss", action_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
+        self.log("train/total_loss", total_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
+        self.log("train/cont_loss", cont_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
+        self.log("train/img_gen_loss", img_gen_loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=total_bs)
 
     def _log_validation_metrics(self, pred_loss, img_gen_loss, val_total_act_loss_pp):
         """

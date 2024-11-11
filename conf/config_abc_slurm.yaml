@@ -1,5 +1,5 @@
 defaults:
-  - callbacks: calvin
+  - callbacks: calvin_ema
   - datamodule: calvin_clear
   - model: mdt_agent # mdt_agent
   - override hydra/job_logging: colorlog

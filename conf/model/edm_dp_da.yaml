@@ -1,13 +1,13 @@
 # conf/model/mdt_da_enc.yaml
-_target_: mdt.models.mdt_da.MDTDomainAdaptVisualEncoder
+_target_: mdt.models.edm_dp_da.EDMDPDomainAdapt
 _recursive_: false
 
 defaults:
   - language_goal: clip
   - visual_goal: clip
-  - img_gen: masked_transformer
-  - model: mdt_transformer
-  - domain_adapt: wgan  # options:adda,wgan,wgan_1152
+  - img_gen: masked_transformer  # not used
+  - model: edm_dp_transformer  # remove cont_loss and img_gen_loss
+  - domain_adapt: wgan_edm_dp  # options:wgan,wgan_edm_dp
 
 latent_dim: 512
 multistep: 10
@@ -25,7 +25,7 @@ masked_beta: 1.0
 use_distributed_clip: True
 use_text_not_embedding: True
 #ckpt_path: null
-ckpt_path: ${root_home}/code/mdt24rss_fork/pretrained/2024-10-03_20-59-31/epoch=39-step=40000.ckpt
+ckpt_path: ${root_home}/code/mdt24rss_fork/pretrained/2024-11-11_01-45-15/epoch=31-step=32000.ckpt
 seed: ${seed}
 
 debug_diff_loss: false  # if true, ignore da_act/shuffle_target_goal/cfg_drop_ratio
@@ -33,7 +33,7 @@ debug_tsne: false
 shuffle_target_goal: true
 cfg_drop_ratio: 0.5  # default:0.2
 reg_source_diff_loss: 1.0  # default:1.0
-use_dann_lambda: false
+use_dann_lambda: true
 
 optimizer:
   _target_: torch.optim.AdamW

@@ -181,21 +181,26 @@ class DebugDatamodule(LightningDataModule):
         }
 
 
-@hydra.main(config_path="../conf", config_name="config_d_hk")
+@hydra.main(config_path="../conf", config_name="libero90_hk")
 def main(cfg: DictConfig) -> None:
     datamodule = hydra.utils.instantiate(cfg.datamodule)
     print('[DEBUG] datamodule loaded')
     datamodule.setup()
     train_set: Dict = datamodule.train_datasets
 
-    print(f'[DEBUG] lang_len={len(train_set["lang"])}, vis_len={len(train_set["vis"])}')
-    print_batch('--- Lang batch', train_set["lang"].__getitem__(0))
+    # print(f'[DEBUG] lang_len={len(train_set["lang"])}, vis_len={len(train_set["vis"])}')
+    # print_batch('--- Lang batch', train_set["lang"].__getitem__(0))
+    # print_batch('--- Vis batch', train_set["vis"][0])
+
+    print(f'[DEBUG] vis_len={len(train_set["vis"])}')
     print_batch('--- Vis batch', train_set["vis"][0])
 
     # print_batch('Dataset.episode_lookup', train_set["vis"].episode_lookup)
     # print_batch('Dataset.lang_lookup', train_set["vis"].lang_lookup)
     # print_batch('Dataset.lang_ann', train_set["vis"].lang_ann)
     # print_batch('Dataset.lang_text', train_set["vis"].lang_text)
+
+    print("Checking OK!")
 
 
 if __name__ == "__main__":

@@ -502,7 +502,7 @@ class ClearDataset(Dataset):
             lang_data = np.load(abs_datasets_dir / self.lang_folder / "auto_lang_ann.npy", allow_pickle=True).item()
         except Exception:
             print("Exception, trying to load lang data from: ", abs_datasets_dir / "auto_lang_ann.npy")
-            lang_data = np.load(abs_datasets_dir / "auto_lang_ann.npy", allow_pickle=True).item()
+            lang_data = np.load(abs_datasets_dir / self.lang_folder / "auto_lang_ann.npy", allow_pickle=True).item()
 
         ep_start_end_ids = lang_data["info"]["indx"]  # each of (second - first) are <= 64, vis:[5124],lang:[1011]
         print('[DEBUG] LANG ep_start_end_ids:', len(ep_start_end_ids), ep_start_end_ids[0], ep_start_end_ids[1], ep_start_end_ids[2])
@@ -580,6 +580,16 @@ class ClearDataset(Dataset):
             gen_img_static: (200, 200, 3), [3,...]
             gen_img_gripper: (84, 84, 3), [3,...]
         '''
+        for ep_idx in range(len(episodes)):
+            episodes[ep_idx] = ep = dict(episodes[ep_idx])
+            # try to fix some missing keys
+            if 'rel_actions' not in ep:
+                episodes[ep_idx]['rel_actions'] = ep['rel_action']
+            if 'scene_obs' not in ep:
+                episodes[ep_idx]['scene_obs'] = np.zeros((1, 24))
+            if 'robot_obs' not in ep:
+                episodes[ep_idx]['robot_obs'] = np.zeros((1, 15))
+
         for key in keys:
             if 'gen' in key:
                 continue
@@ -637,6 +647,15 @@ class ClearDataset(Dataset):
             goal_idx = eps_end_idx
 
         goal_episodes = self.load_file(self._get_episode_name(goal_idx))  # should load [goal_idx-obs_len:goal_idx]
+        goal_episodes = ep = dict(goal_episodes)
+        # try to fix some missing keys
+        if 'rel_actions' not in ep:
+            goal_episodes['rel_actions'] = ep['rel_action']
+        if 'scene_obs' not in ep:
+            goal_episodes['scene_obs'] = np.zeros((1, 24))
+        if 'robot_obs' not in ep:
+            goal_episodes['robot_obs'] = np.zeros((1, 15))
+
         goal_episode = {}
         for key in keys:
             if 'gen' in key:
