@@ -150,7 +150,7 @@ class AdaLNZero(nn.Module):
 
 class Discriminator1d(torch.nn.Module):
     def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False,
-                 ndim: int = 2, time_dim: int = 10,
+                 ndim: int = 2, time_dim: int = 10, use_bn: bool = True,
                  ):
         super(Discriminator1d, self).__init__()
         down_scale = min(4, in_dim // 64)
@@ -173,11 +173,14 @@ class Discriminator1d(torch.nn.Module):
                 nn.LeakyReLU(0.2, inplace=True),
             ),
         ])
-        self.norms = nn.ModuleList([
-            nn.BatchNorm1d(inner_dim * 2),
-            nn.BatchNorm1d(inner_dim * 4),
-            nn.BatchNorm1d(inner_dim * 8),
-        ])
+        if use_bn:
+            self.norms = nn.ModuleList([
+                nn.BatchNorm1d(inner_dim * 2),
+                nn.BatchNorm1d(inner_dim * 4),
+                nn.BatchNorm1d(inner_dim * 8),
+            ])
+        else:
+            self.norms = nn.ModuleList([nn.Identity() for _ in range(3)])
         self.dropout = nn.Dropout(dropout)
         if in_dim < 256:
             self.logit_out = nn.Linear(inner_dim * 8 * 1, 1, bias=False)
@@ -331,7 +334,7 @@ class DiscriminatorFiLM1d(nn.Module):
 
 class Discriminator2d(torch.nn.Module):
     def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False,
-                 ndim: int = 3, time_dim: int = 10,
+                 ndim: int = 3, time_dim: int = 10, use_bn: bool = True,
                  ):
         super(Discriminator2d, self).__init__()
         down_scale = min(4, in_dim // 64)
@@ -353,11 +356,14 @@ class Discriminator2d(torch.nn.Module):
                 nn.LeakyReLU(0.2, inplace=True),
             ),
         ])
-        self.norms = nn.ModuleList([
-            nn.BatchNorm2d(inner_dim * 2),
-            nn.BatchNorm2d(inner_dim * 4),
-            nn.BatchNorm2d(inner_dim * 8),
-        ])
+        if use_bn:
+            self.norms = nn.ModuleList([
+                nn.BatchNorm2d(inner_dim * 2),
+                nn.BatchNorm2d(inner_dim * 4),
+                nn.BatchNorm2d(inner_dim * 8),
+            ])
+        else:
+            self.norms = nn.ModuleList([nn.Identity() for _ in range(3)])
         self.dropout = nn.Dropout(dropout)
         if in_dim < 256:
             self.logit_out = nn.Linear(inner_dim * 8 * 1, 1, bias=False)
@@ -446,7 +452,7 @@ class Discriminator2dSeqGAN(torch.nn.Module):
 
 class Discriminator3d(torch.nn.Module):
     def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False,
-                 ndim: int = 4, time_dim: int = 10,
+                 ndim: int = 4, time_dim: int = 10, use_bn: bool = True,
                  ):
         super(Discriminator3d, self).__init__()
         self.stem = nn.Sequential(
@@ -467,11 +473,14 @@ class Discriminator3d(torch.nn.Module):
                 nn.LeakyReLU(0.2, inplace=True),
             ),
         ])
-        self.norms = nn.ModuleList([
-            nn.BatchNorm2d(inner_dim * 2),
-            nn.BatchNorm2d(inner_dim * 4),
-            nn.BatchNorm2d(inner_dim * 8),
-        ])
+        if use_bn:
+            self.norms = nn.ModuleList([
+                nn.BatchNorm1d(inner_dim * 2),
+                nn.BatchNorm1d(inner_dim * 4),
+                nn.BatchNorm1d(inner_dim * 8),
+            ])
+        else:
+            self.norms = nn.ModuleList([nn.Identity() for _ in range(3)])
         self.dropout = nn.Dropout(dropout)
         if in_dim < 256:
             self.logit_out = nn.Linear(inner_dim * 8 * 4, 1, bias=False)
@@ -533,6 +542,7 @@ class WGAN_GP(torch.nn.Module):
                  num_layers: int = 1,
                  use_ada: bool = False,
                  use_cond_dist: bool = False,
+                 use_bn: bool = True,
                  ):
         super(WGAN_GP, self).__init__()
         self.num_layers = num_layers
@@ -544,7 +554,8 @@ class WGAN_GP(torch.nn.Module):
         for l in range(self.num_layers):
             d_net = self.get_discriminators(in_ndims[l], in_dim=in_dims[l], inner_dim=inner_dim,
                                             use_ada=use_ada, use_cond_dist=use_cond_dist,
-                                            time_dim=time_dim)
+                                            time_dim=time_dim, use_bn=use_bn,
+                                            )
             discriminators.append(d_net)
         self.discriminators = nn.ModuleList(discriminators)
 

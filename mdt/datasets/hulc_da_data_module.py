@@ -38,7 +38,7 @@ class MergedDataset(Dataset):
 
 class HulcDomainAdaptDataModule(pl.LightningDataModule):
     """
-    Config: conf/datamodule/calvin_da.yaml
+    Config: `conf/datamodule/calvin_da.yaml` or `conf/datamodule/libero_da.yaml`
     """
     def __init__(
         self,
@@ -49,6 +49,7 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
         num_workers: int = 8,
         transforms: DictConfig = DEFAULT_TRANSFORM,
         shuffle_val: bool = False,
+        dataset_name: str = "CALVIN",
         **kwargs: Dict,
     ):
         super().__init__()
@@ -64,10 +65,18 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
             source_root_data_path = Path(mdt.__file__).parent / source_root_data_path
         if not target_root_data_path.is_absolute():
             target_root_data_path = Path(mdt.__file__).parent / target_root_data_path
-        self.s_training_dir = source_root_data_path / "training"
-        self.s_val_dir = source_root_data_path / "validation"
-        self.t_training_dir = target_root_data_path / "training"
-        self.t_val_dir = target_root_data_path / "validation"
+
+        if dataset_name == "CALVIN":
+            self.s_training_dir = source_root_data_path / "training"
+            self.s_val_dir = source_root_data_path / "validation"
+            self.t_training_dir = target_root_data_path / "training"
+            self.t_val_dir = target_root_data_path / "validation"
+        elif dataset_name == "LIBERO":  # `training/` as source, `validation` as target
+            self.s_training_dir = source_root_data_path
+            self.s_val_dir = target_root_data_path
+            self.t_training_dir = target_root_data_path
+            self.t_val_dir = target_root_data_path
+
         self.training_dirs = [self.s_training_dir, self.t_training_dir]
         self.val_dirs = [self.s_val_dir, self.t_val_dir]
 

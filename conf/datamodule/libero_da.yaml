@@ -1,0 +1,31 @@
+# conf/datamodule/libero_da.yaml, same with libero_clear.yaml
+defaults:
+  - datasets: clear_libero
+  - transforms: calvin_transforms  # same with calvin
+_target_: mdt.datasets.hulc_da_data_module.HulcDomainAdaptDataModule
+_recursive_: false
+
+dataset_name: LIBERO  # due to different directory with CALVIN
+source_root_data_dir: ${source_root_data_dir}
+target_root_data_dir: ${target_root_data_dir}
+target_train_ratio: 1.0  # default:1.0, others:0.5,1e-1,1e-2,1e-3
+
+action_space: 7
+action_max: [1., 1., 1., 1., 1., 1., 1.,]
+action_min: [-1., -1., -1., -1., -1., -1., -1]
+shuffle_val: false
+
+
+observation_space:
+  rgb_obs: ['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper']
+  depth_obs: []
+  state_obs: ['robot_obs']
+  actions: ['rel_actions']
+  language: ['language']
+
+proprioception_dims:
+  n_state_obs: 8
+  keep_indices: [[0, 7], [14,15]]
+  robot_orientation_idx: [3, 6]
+  normalize: True
+  normalize_robot_orientation: True

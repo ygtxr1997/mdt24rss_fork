@@ -115,7 +115,7 @@ def cmp_two_dataloaders():
     exit()
 
 
-@hydra.main(config_path="../conf", config_name="da_d_hk")
+@hydra.main(config_path="../conf", config_name="da_libero90_hk")
 def main(cfg: DictConfig) -> None:
     # check paths
     if hasattr(cfg, 'root_data_dir'):
@@ -177,7 +177,7 @@ def main(cfg: DictConfig) -> None:
 
 
 if __name__ == "__main__":
-    use_ddp_env = False
+    use_ddp_env = True
     if use_ddp_env:
         os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"

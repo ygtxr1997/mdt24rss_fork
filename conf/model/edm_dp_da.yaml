@@ -1,4 +1,4 @@
-# conf/model/mdt_da_enc.yaml
+# conf/model/edm_dp_da.yaml
 _target_: mdt.models.edm_dp_da.EDMDPDomainAdapt
 _recursive_: false
 

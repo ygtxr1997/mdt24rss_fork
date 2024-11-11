@@ -126,7 +126,7 @@ if __name__ == '__main__':
     '''
     Usage example:
         python mdt/datasets/preprocess/extract_by_key_any.py -i /home2/mingyang/projs/LIBERO/calvin_format  \
-            --in_split training  -k rel_action
+            --in_split training  -k rel_actions
     Params:
         in_root: /YOUR/PATH/TO/CALVIN/, e.g /home/geyuan/datasets/CALVIN/dataset, /data3/geyuan/datasets/CALVIN
         extract_key: A key of 'dict(episode_xxx.npz)'
