@@ -221,8 +221,14 @@ class Attention(nn.Module):
                 context_k = self.key(context)
                 context_v = self.value(context)
             else:
-                context_k = self.key(context) * self.ia3_k
-                context_v = self.value(context) * self.ia3_v
+                if hasattr(self, 'ia3_k'):
+                    context_k = self.key(context) * self.ia3_k
+                    context_v = self.value(context) * self.ia3_v
+                elif hasattr(self, 'k_hyper'):
+                    context_k = self.key(self.k_hyper(context))
+                    context_v = self.key(self.v_hyper(context))
+                else:
+                    raise NotImplementedError("Adapter not found!")
             k = context_k.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
             q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
             v = context_v.view(B, -1, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, Tc, hs)
@@ -270,10 +276,10 @@ class Attention(nn.Module):
     def register_adapter(self):
         self.has_adapter = True
 
-        # self.register_module('k_hyper', SDHyperNet(512))
-        # self.register_module('v_hyper', SDHyperNet(512))
-        self.register_parameter('ia3_k', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
-        self.register_parameter('ia3_v', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
+        self.register_module('k_hyper', SDHyperNet(512))
+        self.register_module('v_hyper', SDHyperNet(512))
+        # self.register_parameter('ia3_k', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
+        # self.register_parameter('ia3_v', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
     
 
 class MLP(nn.Module):
@@ -458,7 +464,7 @@ class ConditionedBlock(Block):
     def register_adapter(self):
         self.has_adapter = True
         self.cross_att.register_adapter()
-        self.mlp.register_adapter()
+        # self.mlp.register_adapter()
 
     def unfreeze_adapter(self):
         if not self.cross_att.has_adapter:
@@ -467,11 +473,11 @@ class ConditionedBlock(Block):
         # self.ca_adapter.requires_grad_(True)
         # self.mlp_adapter.requires_grad_(True)
         # self.q_hyper.requires_grad_(True)
-        # self.cross_att.k_hyper.requires_grad_(True)
-        # self.cross_att.v_hyper.requires_grad_(True)
-        self.cross_att.ia3_k.requires_grad = True
-        self.cross_att.ia3_v.requires_grad = True
-        self.mlp.ia3_mlp.requires_grad = True
+        self.cross_att.k_hyper.requires_grad_(True)
+        self.cross_att.v_hyper.requires_grad_(True)
+        # self.cross_att.ia3_k.requires_grad = True
+        # self.cross_att.ia3_v.requires_grad = True
+        # self.mlp.ia3_mlp.requires_grad = True
 
     def unfreeze_cross_attention(self):
         if self.use_cross_attention:

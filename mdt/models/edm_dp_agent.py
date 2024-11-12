@@ -130,7 +130,7 @@ class EDMDPAgent(pl.LightningModule):
         print("Loading pretrained parameters")
         checkpoint_data = torch.load(ckpt_path)
         '''if 'callbacks'''
-        if "ema_weights" in checkpoint_data['callbacks']['EMA']:
+        if checkpoint_data['callbacks'].get("EMA") is not None and "ema_weights" in checkpoint_data['callbacks']['EMA']:
             ema_weights_list = checkpoint_data['callbacks']['EMA']['ema_weights']
 
             # Convert list of tensors to a state_dict format

@@ -115,7 +115,7 @@ def cmp_two_dataloaders():
     exit()
 
 
-@hydra.main(config_path="../conf", config_name="da_libero90_hk")
+@hydra.main(config_path="../conf", config_name="libero90_hk")
 def main(cfg: DictConfig) -> None:
     # check paths
     if hasattr(cfg, 'root_data_dir'):
