@@ -276,10 +276,12 @@ class Attention(nn.Module):
     def register_adapter(self):
         self.has_adapter = True
 
-        self.register_module('k_hyper', SDHyperNet(512))
-        self.register_module('v_hyper', SDHyperNet(512))
-        # self.register_parameter('ia3_k', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
-        # self.register_parameter('ia3_v', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
+        # self.register_module('k_hyper', SDHyperNet(512))
+        # self.register_module('v_hyper', SDHyperNet(512))
+        # print("[DEBUG] kv_sd_hyper registered!")
+        self.register_parameter('ia3_k', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
+        self.register_parameter('ia3_v', nn.Parameter(torch.ones(self.n_embd), requires_grad=True))
+        print("[DEBUG] ia3_kv registered!")
     
 
 class MLP(nn.Module):
@@ -473,10 +475,10 @@ class ConditionedBlock(Block):
         # self.ca_adapter.requires_grad_(True)
         # self.mlp_adapter.requires_grad_(True)
         # self.q_hyper.requires_grad_(True)
-        self.cross_att.k_hyper.requires_grad_(True)
-        self.cross_att.v_hyper.requires_grad_(True)
-        # self.cross_att.ia3_k.requires_grad = True
-        # self.cross_att.ia3_v.requires_grad = True
+        # self.cross_att.k_hyper.requires_grad_(True)
+        # self.cross_att.v_hyper.requires_grad_(True)
+        self.cross_att.ia3_k.requires_grad = True
+        self.cross_att.ia3_v.requires_grad = True
         # self.mlp.ia3_mlp.requires_grad = True
 
     def unfreeze_cross_attention(self):

@@ -31,9 +31,9 @@ seed: ${seed}
 debug_diff_loss: false  # if true, ignore da_act/shuffle_target_goal/cfg_drop_ratio
 debug_tsne: false
 shuffle_target_goal: true
-cfg_drop_ratio: 0.5  # default:0.2
+cfg_drop_ratio: 0.2  # default:0.2
 reg_source_diff_loss: 0.  # default:1.0
-use_dann_lambda: true
+use_dann_lambda: false
 
 optimizer:
   _target_: torch.optim.AdamW

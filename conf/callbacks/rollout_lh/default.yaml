@@ -9,7 +9,7 @@ env_cfg:
 skip_epochs: ${rollout_lh_skip_epochs}
 rollout_freq: 2  # default:3
 num_videos: 0
-num_sequences: 1000 # ori:1000
+num_sequences: 200 # ori:1000
 replan_freq: 30
 ep_len: 360
 empty_cache: false
@@ -17,4 +17,4 @@ log_video_to_file: False
 save_dir: ./videos
 lang_folder: ${lang_folder} # ${datamodule.datasets.lang_dataset.lang_folder}
 debug: false
-val_after_sanity: false
+val_after_sanity: true

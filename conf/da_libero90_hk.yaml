@@ -48,7 +48,7 @@ trainer:
   max_epochs: ${max_epochs}
   sync_batchnorm: false
   accelerator: auto
-  limit_train_batches: 300  # ori:300
+  limit_train_batches: 80  # ori:300
   limit_val_batches: 4
 
 logger:
