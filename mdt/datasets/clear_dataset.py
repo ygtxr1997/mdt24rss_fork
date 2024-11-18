@@ -153,7 +153,9 @@ class ClearDataset(Dataset):
 
         self.lookup_len = len(self.episode_lookup)
         self.chose_ratio = chose_ratio
-        self.chose_len = int(self.lookup_len * chose_ratio)  # accessible ep length
+        if chose_ratio < 1.:
+            self.chose_len = int(self.lookup_len * chose_ratio)  # accessible ep length
+            self.chose_indices = np.random.choice(self.lookup_len, self.chose_len, replace=False)
 
         self.naming_pattern, self.n_digits = lookup_naming_pattern(self.abs_datasets_dir, self.save_format)
 
@@ -193,6 +195,8 @@ class ClearDataset(Dataset):
             Loaded sequence.
         """
         if isinstance(idx, int):
+            if self.chose_ratio < 1.:
+                idx = self.chose_indices[idx]
             # When max_ws_size and min_ws_size are equal, avoid unnecessary padding
             # acts like Constant dataset. Currently, used for language data
             if self.min_window_size == self.max_window_size:
@@ -204,12 +208,14 @@ class ClearDataset(Dataset):
                 raise ValueError
         else:
             idx, window_size = idx
+            if self.chose_ratio < 1.:
+                idx = self.chose_indices[idx]
 
-        if idx < self.chose_len:
-            pass  # do nothing
-        else:
-            # To avoid overflow
-            idx = np.random.randint(0, self.chose_len)
+        # if idx < self.chose_len:
+        #     pass  # do nothing
+        # else:
+        #     # To avoid overflow
+        #     idx = np.random.randint(0, self.chose_len)
 
         sequence = self._get_sequences(idx, window_size)
         if self.pad:  # used:False
@@ -628,6 +634,7 @@ class ClearDataset(Dataset):
         if self.with_lang:
             episode["language"] = self.lang_ann[self.lang_lookup[idx]][0]  # TODO check  [0]
             episode["language_text"] = self.lang_text[self.lang_lookup[idx]]  # [0]  # TODO check  [0]
+            assert len(self.lang_text) < 2 * self.lang_lookup[-1], "lang_text length error!"
 
         '''
         2. Read from [goal-obs,goal]

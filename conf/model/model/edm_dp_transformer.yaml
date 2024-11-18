@@ -11,8 +11,8 @@ inner_model:
   proprio_dim: 8
   goal_conditioned: True
   embed_dim: 512
-  n_dec_layers: 2  # ori:6
-  n_enc_layers: 0  # ori:4
+  n_dec_layers: 6  # ori:6
+  n_enc_layers: 2  # ori:4
   goal_seq_len: ${goal_window_size}
   obs_seq_len: ${obs_seq_len}
   action_seq_len: ${act_seq_len}

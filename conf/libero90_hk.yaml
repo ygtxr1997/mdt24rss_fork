@@ -30,7 +30,7 @@ act_seq_len: 10
 multistep: 10 #${act_seq_len}
 p_last_state: 0
 gen_img_res: 112
-max_epochs: 40
+max_epochs: 5
 rollout_lh_skip_epochs: 29
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3

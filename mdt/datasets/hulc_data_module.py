@@ -8,7 +8,7 @@ import numpy as np
 from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 from pytorch_lightning.trainer.supporters import CombinedLoader
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 import torchvision
 
 import mdt
@@ -20,6 +20,34 @@ DEFAULT_TRANSFORM = OmegaConf.create({"train": None, "val": None})
 ONE_EP_DATASET_URL = "http://www.informatik.uni-freiburg.de/~meeso/50steps.tar.xz"
 
 
+class ConcatenatedDataset(Dataset):
+    def __init__(self, datasets: List[Dataset]):
+        self.datasets = datasets
+        self.dataset_lens = [d.chose_len for d in datasets]
+        self.batch_size = datasets[0].batch_size
+        self.num_workers = datasets[0].num_workers
+        self.total_len = sum(self.dataset_lens)
+        self.dataset_len_prefix_sum = []
+        for d_len in self.dataset_lens:
+            if len(self.dataset_len_prefix_sum) == 0:
+                self.dataset_len_prefix_sum.append(d_len)
+            else:
+                self.dataset_len_prefix_sum.append(self.dataset_len_prefix_sum[-1] + d_len)
+        print(f"[DEBUG] ConcatenatedDataset, total_len={self.total_len}, split_lens={self.dataset_lens}")
+    def __len__(self):
+        return self.total_len
+    def __getitem__(self, idx, **kwargs):
+        previous_dataset_len_sum = 0
+        for dataset_idx, dataset_len_sum in enumerate(self.dataset_len_prefix_sum):
+            if idx < dataset_len_sum:
+                relative_idx = idx - previous_dataset_len_sum
+                # print(f"[DEBUG] {idx} : {relative_idx} in [{previous_dataset_len_sum}, {dataset_len_sum}]")
+                return self.datasets[dataset_idx].__getitem__(relative_idx, **kwargs)
+            else:
+                previous_dataset_len_sum += dataset_len_sum
+        raise IndexError(f"{idx} >= {self.total_len}")
+
+
 class HulcDataModule(pl.LightningDataModule):
     def __init__(
         self,
@@ -28,6 +56,8 @@ class HulcDataModule(pl.LightningDataModule):
         num_workers: int = 8,
         transforms: DictConfig = DEFAULT_TRANSFORM,
         shuffle_val: bool = False,
+        train_ratio: float = 1.,
+        val_as_train_ratio: float = 0.,
         **kwargs: Dict,
     ):
         super().__init__()
@@ -45,6 +75,8 @@ class HulcDataModule(pl.LightningDataModule):
         self.shuffle_val = shuffle_val
         self.modalities: List[str] = []
         self.transforms = transforms
+        self.train_ratio = train_ratio
+        self.val_as_train_ratio = val_as_train_ratio
 
         if 'lang_dataset' in self.datasets_cfg: 
             if "shm_dataset" in self.datasets_cfg.lang_dataset._target_:
@@ -126,8 +158,15 @@ class HulcDataModule(pl.LightningDataModule):
                 continue
             else:
                 train_dataset = hydra.utils.instantiate(
-                    dataset, datasets_dir=self.training_dir, transforms=self.train_transforms
+                    dataset, datasets_dir=self.training_dir, transforms=self.train_transforms,
+                    chose_ratio=self.train_ratio,
                 )
+                if self.val_as_train_ratio > 0.:
+                    val_as_train_dataset = hydra.utils.instantiate(
+                        dataset, datasets_dir=self.val_dir, transforms=self.train_transforms,
+                        chose_ratio=self.val_as_train_ratio,
+                    )
+                    train_dataset = ConcatenatedDataset([train_dataset, val_as_train_dataset])
                 val_dataset = hydra.utils.instantiate(dataset, datasets_dir=self.val_dir, transforms=self.val_transforms)
                 if self.use_shm:
                     train_dataset.setup_shm_lookup(train_shm_lookup)
@@ -136,7 +175,8 @@ class HulcDataModule(pl.LightningDataModule):
                 self.train_datasets[key] = train_dataset
                 self.val_datasets[key] = val_dataset
                 self.modalities.append(key)
-        print('[DEBUG] HulcDataModule setup finished.')
+        print(f'[DEBUG] HulcDataModule setup finished. train_ratio={self.train_ratio * 100:.2f}%, '
+              f'val_as_train_ratio={self.val_as_train_ratio * 100:.2f}%')
 
     def train_dataloader(self):
         return {

@@ -4,7 +4,7 @@ _recursive_: false
 defaults:
   - language_goal: clip
   - visual_goal: clip
-  - img_gen: masked_transformer  # not used
+  - img_gen: masked_transformer  # ori: masked_transformer, choices:`no_encoder`
   - model: edm_dp_transformer  # remove cont_loss and img_gen_loss
 
 latent_dim: 512
@@ -18,8 +18,8 @@ noise_scheduler: 'exponential'
 sigma_sample_density_type: 'loglogistic'
 use_lr_scheduler: true
 act_window_size: 10
-cont_alpha: 1.0
-masked_beta: 1.0
+cont_alpha: 0.  # ori:1.0
+masked_beta: 0.  # ori:1.0
 use_distributed_clip: True
 use_text_not_embedding: True
 ckpt_path: null

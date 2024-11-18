@@ -88,7 +88,7 @@ class EDMDPDomainAdapt(pl.LightningModule):
         self.static_resnet = BesoResNetEncoder(self.latent_dim)
         self.gripper_resnet = BesoResNetEncoder(self.latent_dim)
         self.act_window_size = act_window_size
-        self.gen_img = NoEncoder()  # placeholder, remove img_gen loss
+        self.gen_img = hydra.utils.instantiate(img_gen).to(self.device)  # placeholder, remove img_gen loss
         self.seed = seed
         self.use_lr_scheduler = use_lr_scheduler
         # goal encoders

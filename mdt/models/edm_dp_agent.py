@@ -77,7 +77,7 @@ class EDMDPAgent(pl.LightningModule):
         self.static_resnet = BesoResNetEncoder(self.latent_dim)
         self.gripper_resnet = BesoResNetEncoder(self.latent_dim)
         self.act_window_size = act_window_size
-        self.gen_img = NoEncoder()  # placeholder, remove img_gen loss
+        self.gen_img = hydra.utils.instantiate(img_gen).to(self.device)  # placeholder, remove img_gen loss
         self.seed = seed
         self.use_lr_scheduler = use_lr_scheduler
         # goal encoders
@@ -156,7 +156,7 @@ class EDMDPAgent(pl.LightningModule):
         ]
         optim_groups.extend([
             # {"params": self.visual_goal.parameters(), "weight_decay": self.optimizer_config.obs_encoder_weight_decay},
-            # {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
+            {"params": self.gen_img.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.static_resnet.parameters(), "weight_decay": self.optimizer_config.transformer_weight_decay},
             {"params": self.gripper_resnet.parameters(),
              "weight_decay": self.optimizer_config.transformer_weight_decay},
@@ -253,18 +253,18 @@ class EDMDPAgent(pl.LightningModule):
                 img_gen_loss += img_gen_loss_part * self.masked_beta
                 total_loss += img_gen_loss_part * self.masked_beta
 
-            # # use contrastive loss (removed for edm diffusion policy)
-            # # Compute the Contrastive Latent Alignment Loss
-            # cont_loss_part = self.compute_contrastive_loss(
-            #     perceptual_emb,
-            #     latent_goal,
-            #     image_latent_goal,
-            #     dataset_batch,
-            #     sigmas,
-            #     noise
-            # )
-            # cont_loss += self.cont_alpha * cont_loss_part
-            # total_loss += self.cont_alpha * cont_loss_part
+            # use contrastive loss (removed for edm diffusion policy)
+            # Compute the Contrastive Latent Alignment Loss
+            cont_loss_part = self.compute_contrastive_loss(
+                perceptual_emb,
+                latent_goal,
+                image_latent_goal,
+                dataset_batch,
+                sigmas,
+                noise
+            )
+            cont_loss += self.cont_alpha * cont_loss_part
+            total_loss += self.cont_alpha * cont_loss_part
 
             action_loss += act_loss
             total_loss += act_loss

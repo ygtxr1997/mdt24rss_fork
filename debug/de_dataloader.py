@@ -130,14 +130,30 @@ def main(cfg: DictConfig) -> None:
     datamodule.prepare_data()
     datamodule.setup(stage='train')
 
+    for dataloader in datamodule.train_dataloader().values():
+        for idx, batch in enumerate(tqdm(dataloader)):
+            print(('-' * 20) + ' Batch Start ' + ('-' * 20))
+
+            dataset_keys = batch.keys()
+            for dataset_key in dataset_keys:
+                print(('=' * 20) + f' Dataset {dataset_key} ' + ('=' * 20))
+                example = batch[dataset_key]
+
+            print_batch(f'Batch@{idx}th', batch)
+            print(('-' * 20) + ' Batch End ' + ('-' * 20))
+            exit()
+
     for idx, batch in enumerate(tqdm(datamodule.train_dataloader())):
         print(('-' * 20) + ' Batch Start ' + ('-' * 20))
+
         dataset_keys = batch.keys()
         for dataset_key in dataset_keys:
             print(('=' * 20) + f' Dataset {dataset_key} ' + ('=' * 20))
             example = batch[dataset_key]
-        # print_batch(f'Batch@{idx}th', batch)
+
+        print_batch(f'Batch@{idx}th', batch)
         print(('-' * 20) + ' Batch End ' + ('-' * 20))
+        exit()
 
     '''
     Lang: Dict,keys=dict_keys(['robot_obs', 'rgb_obs', 'depth_obs', 'actions', 'state_info', 'use_for_aux_lang_loss', 'lang', 'lang_text', 'idx', 'future_frame_diff'])

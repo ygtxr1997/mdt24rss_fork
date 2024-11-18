@@ -10,6 +10,8 @@ action_space: 7
 action_max: [1., 1., 1., 1., 1., 1., 1.,]
 action_min: [-1., -1., -1., -1., -1., -1., -1]
 shuffle_val: false
+train_ratio: 0.95
+val_as_train_ratio: 0.2
 
 
 observation_space:

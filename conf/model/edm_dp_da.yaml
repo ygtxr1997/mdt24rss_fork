@@ -25,7 +25,7 @@ masked_beta: 1.0
 use_distributed_clip: True
 use_text_not_embedding: True
 #ckpt_path: null
-ckpt_path: ${root_home}/code/mdt24rss_fork/pretrained/2024-11-11_01-45-15/epoch=31-step=32000.ckpt
+ckpt_path: ${root_home}/code/mdt24rss_fork/pretrained/2024-11-13_13-17-11/epoch=4-step=5000.ckpt
 seed: ${seed}
 
 debug_diff_loss: false  # if true, ignore da_act/shuffle_target_goal/cfg_drop_ratio

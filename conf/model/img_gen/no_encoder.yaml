@@ -1,0 +1,4 @@
+_target_: mdt.models.perceptual_encoders.no_encoder.NoEncoder
+_recursive_: false
+
+context_dim: 1  # placeholder
