@@ -128,7 +128,7 @@ class MDTAgent(pl.LightningModule):
         print("Loading pretrained parameters")
         checkpoint_data = torch.load(ckpt_path)
         '''if 'callbacks'''
-        if "ema_weights" in checkpoint_data['callbacks']['EMA']:
+        if 'EMA' in checkpoint_data['callbacks'] and "ema_weights" in checkpoint_data['callbacks']['EMA']:
             ema_weights_list = checkpoint_data['callbacks']['EMA']['ema_weights']
             
             # Convert list of tensors to a state_dict format
@@ -534,6 +534,7 @@ class MDTAgent(pl.LightningModule):
 
         x = torch.randn((len(latent_goal), self.act_window_size, 7), device=self.device) * self.sigma_max
 
+        print("[DEBUG]", sigmas.shape, x.shape, input_state['static'].shape, latent_goal.shape, latent_goal.shape)
         actions = self.sample_loop(sigmas, x, input_state, latent_goal, latent_plan, self.sampler_type, extra_args)
 
         return actions
@@ -678,7 +679,7 @@ class MDTAgent(pl.LightningModule):
         """
         Method for doing inference with the model.
         """
-        if 'lang' in goal:
+        if 'lang' in goal or 'lang_text' in goal:
             modality = 'lang'
             if self.use_text_not_embedding:
                 # print(goal.keys())
@@ -807,6 +808,187 @@ class MDTAgent(pl.LightningModule):
     def on_validation_epoch_start(self) -> None:
         log_rank_0(f"Start validation epoch {self.current_epoch}")
 
+
+class MDTAgentOXE(MDTAgent):
+    """
+    Son class of MDTAgent, dedicated for OXE training.
+    """
+    def norm_image(self, img: torch.Tensor) -> torch.Tensor:
+        img = (img / 255.) * 2. - 1.  # to [-1,1]
+        img = torch.concatenate([img, img], dim=1)  # append `goal` image
+        return img.to(dtype=self.dtype, device=self.device)
+
+    def norm_action(self, act: torch.Tensor) -> torch.Tensor:
+        # act[:, :, :, -1] = act[:, :, :, -1] * 2. - 1.  # to [-1,1]
+        act = act.squeeze(dim=1)
+        return act.to(dtype=self.dtype, device=self.device)
+
+    def training_step(self, batch: Dict[str, Dict], batch_idx: int,
+                      dataloader_idx: int = 0) -> torch.Tensor:  # type: ignore
+        """
+        Compute and return the training loss for the MDT Agent.
+        The training loss consists of the score matching loss of the diffusion model
+        and the contrastive loss of the CLIP model for the multimodal encoder.
+
+        Args:
+            batch: Dictionary containing the batch data for each modality.
+            batch_idx: Index of the batch. used for compatibility with pytorch lightning.
+            dataloader_idx: Index of the dataloader. used for compatibility with pytorch lightning.
+
+        Returns:
+            loss tensor
+        """
+        batch = {
+            # 'vis': batch['vis_target'],
+            'lang': batch,  # lang only
+        }
+        total_loss, action_loss, cont_loss, id_loss, img_gen_loss = (
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+            torch.tensor(0.0).to(self.device),
+        )
+        encoders_dict = {}
+        batch_size: Dict[str, int] = {}
+        total_bs = 0
+        for self.modality_scope, dataset_batch in batch.items():
+            ''' remapping dict keys '''
+            dataset_batch['rgb_obs'] = {
+                'rgb_static': self.norm_image(dataset_batch['observation']['image_primary']),
+                'rgb_gripper': self.norm_image(dataset_batch['observation']['image_wrist']),
+            }
+            dataset_batch['lang_text'] = dataset_batch['task']['language_instruction'][0]  # [[str,str,...]]
+            dataset_batch['actions'] = self.norm_action(dataset_batch['action'])
+
+            # print(f"Modality Scope: {self.modality_scope}")
+            # Compute the required embeddings
+            perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(dataset_batch)
+
+            act_loss, sigmas, noise = self.diffusion_loss(
+                perceptual_emb,
+                latent_goal,
+                dataset_batch["actions"],
+            )
+            latent_encoder_emb = self.model.inner_model.latent_encoder_emb
+
+            # Compute the masked generative foresight loss
+            if not isinstance(self.gen_img, NoEncoder):
+                rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
+                rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
+                img_gen_frame_diff = dataset_batch['future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
+                # combine both goal images
+                rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
+                img_gen_embed = latent_encoder_emb
+                img_gen_loss_part = self.compute_img_gen_loss(img_gen_embed, rgb_pred_goal,
+                                                              img_gen_frame_diff=img_gen_frame_diff)
+                img_gen_loss += img_gen_loss_part * self.masked_beta
+                total_loss += img_gen_loss_part * self.masked_beta
+            # use contrastive loss
+            # Compute the Contrastive Latent Alignment Loss
+            cont_loss_part = self.compute_contrastive_loss(
+                perceptual_emb,
+                latent_goal,
+                image_latent_goal,
+                dataset_batch,
+                sigmas,
+                noise
+            )
+            cont_loss += self.cont_alpha * cont_loss_part
+            total_loss += self.cont_alpha * cont_loss_part
+
+            action_loss += act_loss
+            total_loss += act_loss
+
+            batch_size[self.modality_scope] = dataset_batch["actions"].shape[0]
+            total_bs += dataset_batch["actions"].shape[0]
+
+        batch_len = len(batch)
+        total_loss = total_loss / batch_len  # divide accumulated gradients by number of datasets
+        cont_loss = cont_loss / batch_len
+        action_loss = action_loss / batch_len
+        img_gen_loss = img_gen_loss / batch_len
+
+        # Log the metrics
+        # self.on_before_zero_grad()
+        self._log_training_metrics(action_loss, total_loss, cont_loss, img_gen_loss, total_bs)
+        return total_loss
+
+    @torch.no_grad()
+    def validation_step(self, batch: Dict[str, Dict], batch_idx: int, dataloader_idx: int = 0) -> Dict[
+        str, torch.Tensor]:  # type: ignore
+        """
+        Compute and log the validation losses and additional metrics.
+        During the validation step, the diffusion model predicts the next action sequence given the current state
+
+        Args:
+            batch: Dictionary containing the batch data for each modality.
+            batch_idx: Index of the batch. used for compatibility with pytorch lightning.
+            dataloader_idx: Index of the dataloader. used for compatibility with pytorch lightning.
+
+        Returns:
+            Dictionary containing the sampled plans of plan recognition and plan proposal networks, as well as the
+            episode indices.
+        """
+        output = {}
+        batch = {
+            # 'vis': batch['vis_target'],
+            'lang': batch,  # lang only
+        }
+        val_total_act_loss_pp = torch.tensor(0.0).to(self.device)
+        for self.modality_scope, dataset_batch in batch.items():
+            ''' remapping dict keys '''
+            dataset_batch['rgb_obs'] = {
+                'rgb_static': self.norm_image(dataset_batch['observation']['image_primary']),
+                'rgb_gripper': self.norm_image(dataset_batch['observation']['image_wrist']),
+            }
+            dataset_batch['lang_text'] = dataset_batch['task']['language_instruction'][0]  # [[str,str,...]]
+            dataset_batch['actions'] = self.norm_action(dataset_batch['action'])
+            dataset_batch['idx'] = dataset_batch['observation']['timestep'][0].long()
+
+            # Compute the required embeddings
+            perceptual_emb, latent_goal, image_latent_goal = self.compute_input_embeddings(dataset_batch)
+
+            print("[DEBUG] val shape:", perceptual_emb['static'].shape, perceptual_emb['gripper'].shape,
+                  latent_goal.shape, image_latent_goal.shape)
+
+            # predict the next action sequence
+            action_pred = self.denoise_actions(
+                torch.zeros_like(latent_goal).to(latent_goal.device),
+                perceptual_emb,
+                latent_goal,
+                inference=True,
+            )
+            # compute the mse action loss
+            pred_loss = torch.nn.functional.mse_loss(action_pred, dataset_batch["actions"])
+            latent_encoder_emb = self.model.inner_model.latent_encoder_emb
+            val_total_act_loss_pp += pred_loss
+
+            # next compute the image generation loss
+            if not isinstance(self.gen_img, NoEncoder):
+                rgb_static_goal = dataset_batch["rgb_obs"]['gen_static']
+                rgb_gripper_goal = dataset_batch["rgb_obs"]['gen_gripper']
+                img_gen_frame_diff = dataset_batch['future_frame_diff'] if "future_frame_diff" in dataset_batch else 3
+                # combine both goal images
+                rgb_pred_goal = torch.cat([rgb_static_goal, rgb_gripper_goal], dim=1)
+
+                img_gen_embed = latent_encoder_emb
+
+                img_gen_loss = self.compute_img_gen_loss(
+                    img_gen_embed,
+                    rgb_pred_goal,
+                    store_img=False,
+                    batch_idx=batch_idx,
+                    img_gen_frame_diff=img_gen_frame_diff,
+                )
+            else:
+                img_gen_loss = torch.tensor(0.0).to(self.device)
+
+            self._log_validation_metrics(pred_loss, img_gen_loss, val_total_act_loss_pp)
+
+            output[f"idx_{self.modality_scope}"] = dataset_batch["idx"]
+            output["validation_loss"] = val_total_act_loss_pp
+        return output
 
     
 @rank_zero_only

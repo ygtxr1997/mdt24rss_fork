@@ -145,7 +145,7 @@ def evaluate_policy(model, env, lang_embeddings, cfg, num_videos=0, save_dir=Non
             success_rates = count_success(results)
             average_rate = sum(success_rates) / len(success_rates) * 5
             description = " ".join([f"{i + 1}/5 : {v * 100:.1f}% |" for i, v in enumerate(success_rates)])
-            description += f" Average: {average_rate:.1f} |"
+            description += f" Average: {average_rate:.3f} |"
             eval_sequences.set_description(description)
 
     if num_videos > 0:
