@@ -1,13 +1,13 @@
-# conf/model/mdt_da_enc.yaml
-_target_: mdt.models.mdt_da.MDTDomainAdaptVisualEncoder
+# conf/model/mdt_da_oxe.yaml
+_target_: mdt.models.mdt_da.MDTDomainAdaptOXE
 _recursive_: false
 
 defaults:
   - language_goal: clip
   - visual_goal: clip
-  - img_gen: masked_transformer
+  - img_gen: no_encoder
   - model: mdt_transformer
-  - domain_adapt: wgan  # options:adda,wgan,wgan_1152
+  - domain_adapt: wgan_oxe  # options:adda,wgan,wgan_1152
 
 latent_dim: 512
 multistep: 10
@@ -25,7 +25,7 @@ masked_beta: 1.0
 use_distributed_clip: True
 use_text_not_embedding: True
 #ckpt_path: null
-ckpt_path: ${root_home}/code/mdt24rss_fork/pretrained/2024-10-03_20-59-31/epoch=39-step=40000.ckpt
+ckpt_path: ${root_home}/code/mdt24rss_fork/pretrained/2025-03-01_19-16-36/epoch=19-step=20000.ckpt
 seed: ${seed}
 
 debug_diff_loss: false  # if true, ignore da_act/shuffle_target_goal/cfg_drop_ratio

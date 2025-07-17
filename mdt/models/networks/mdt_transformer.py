@@ -261,7 +261,7 @@ class MDTTransformer(nn.Module):
         goals = self.preprocess_goals(goals, 1, uncond)
         state_embed, proprio_states = self.process_state_embeddings(states)
         goal_embed = self.goal_emb(goals)
-        action_embed = self.action_emb(actions) if actions is not None else None
+        action_embed = self.action_emb(actions.to(self.action_emb.weight.dtype)) if actions is not None else None
 
         if self.use_abs_pos_emb:
             goal_x, state_x, action_x, proprio_x = self.apply_position_embeddings(goal_embed, state_embed, action_embed, proprio_states, 1)
@@ -321,7 +321,7 @@ class MDTTransformer(nn.Module):
         goals = self.preprocess_goals(goals, t, uncond)
         state_embed, proprio_states = self.process_state_embeddings(states)
         goal_embed = self.process_goal_embeddings(goals, states)
-        action_embed = self.action_emb(actions)
+        action_embed = self.action_emb(actions.to(self.action_emb.weight.dtype))
 
         if self.use_abs_pos_emb:
             goal_x, state_x, action_x, proprio_x = self.apply_position_embeddings(goal_embed, state_embed, action_embed, proprio_states, t)

@@ -1,0 +1,4 @@
+_target_: mdt.models.language_encoders.clip_tokens.TokenLangClip  # ori: TokenClip
+_recursive_: false
+
+model_name: "openai/clip-vit-base-patch32"

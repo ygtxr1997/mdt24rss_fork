@@ -13,6 +13,7 @@ from omegaconf import DictConfig, OmegaConf
 import pytorch_lightning as pl
 import torch.distributed as dist
 from pytorch_lightning.utilities import rank_zero_info, rank_zero_only
+import torchvision
 import einops 
 import torch.optim as optim
 import wandb
@@ -77,6 +78,8 @@ class MDTVAgent(pl.LightningModule):
         perceiver_num_time_embeds: int = 1,
         perceiver_dim: int = 384,
         num_latents: int = 3,
+        # real exp added
+        use_proprioception: bool = False,
     ):
         super(MDTVAgent, self).__init__()
         self.latent_dim = latent_dim
@@ -141,6 +144,10 @@ class MDTVAgent(pl.LightningModule):
         self.ema_callback_idx = None
         if ckpt_path is not None:
             self.load_pretrained_parameters(ckpt_path)
+
+        # For real-world experiments
+        self.pred_action_seq = None
+        self.use_proprioception = use_proprioception
 
     def load_pretrained_parameters(self, ckpt_path):
         """
@@ -295,6 +302,7 @@ class MDTVAgent(pl.LightningModule):
         # Log the metrics
         # self.on_before_zero_grad()
         self._log_training_metrics(action_loss, total_loss, cont_loss, img_gen_loss, total_bs)
+        self._log_images(batch, batch_idx)
         return total_loss
 
     @torch.no_grad()
@@ -387,6 +395,11 @@ class MDTVAgent(pl.LightningModule):
 
         perceptual_emb = self.compute_voltron_embeddings(rgb_static, rgb_gripper)
         perceptual_emb['modality'] = modality
+
+        if self.use_proprioception:  # use proprioception data
+            assert "robot_obs" in dataset_batch, "use_proprioception needs `robot_obs` in obs.keys()"
+            perceptual_emb['state_obs'] = dataset_batch['robot_obs'].to(latent_goal.dtype)
+
         return perceptual_emb, latent_goal, image_latent_goal
     
     def compute_voltron_embeddings(self, rgb_static, rgb_gripper):
@@ -504,6 +517,35 @@ class MDTVAgent(pl.LightningModule):
             sync_dist=True,
         )
         self.log(f"val_act/img_gen_loss_pp", img_gen_loss, sync_dist=True)
+
+    @rank_zero_only
+    def _log_images(self, batch, batch_idx, phase="train", freq=500):
+        if batch_idx % freq != 0:
+            return
+
+        for modality_scope, dataset_batch in batch.items():
+            # 取前4张（如果batch小于4不会报错）
+            rgb_static = dataset_batch["rgb_obs"]["rgb_static"][:4, 0]  # [B, C, H, W]
+            rgb_gripper = dataset_batch["rgb_obs"]["rgb_gripper"][:4, 0]
+            lang_text = dataset_batch["lang_text"] if "lang" in modality_scope else "None"
+            # 归一化
+            imgs_static = (rgb_static + 1.0) / 2.0
+            imgs_gripper = (rgb_gripper + 1.0) / 2.0
+            imgs_static = imgs_static.cpu().float()
+            imgs_gripper = imgs_gripper.cpu().float()
+            # 拼成 1 行4列 grid
+            grid_static = torchvision.utils.make_grid(imgs_static, nrow=4)  # [C, H, W]
+            grid_gripper = torchvision.utils.make_grid(imgs_gripper, nrow=4)
+            # 转为 HWC numpy
+            grid_static = grid_static.permute(1, 2, 0).numpy()
+            grid_gripper = grid_gripper.permute(1, 2, 0).numpy()
+
+            # 上传到 wandb
+            self.logger.experiment.log({
+                f"{phase}/rgb_static_grid": wandb.Image(grid_static, caption=f"{lang_text} static"),
+                f"{phase}/rgb_gripper_grid": wandb.Image(grid_gripper, caption=f"{lang_text} gripper"),
+            })
+            break  # 只 log 第一个modality
     
     def diffusion_loss(
         self,
@@ -516,7 +558,8 @@ class MDTVAgent(pl.LightningModule):
         """
         self.model.train()
         sigmas = self.make_sample_density()(shape=(len(actions),), device=self.device).to(self.device)
-        noise = torch.randn_like(actions).to(self.device)
+        noise = torch.randn_like(actions).to(self.dtype)
+        actions = actions.to(torch.bfloat16)
         loss, _ = self.model.loss(perceptual_emb, actions, latent_goal, noise, sigmas)
         return loss, sigmas, noise
     
@@ -684,12 +727,14 @@ class MDTVAgent(pl.LightningModule):
         self.plan = None
         self.latent_goal = None
         self.rollout_step_counter = 0
+        self.pred_action_seq = None
+        print("[MDTVAgent] Model reset.")
     
     def forward(self, obs, goal):
         """
         Method for doing inference with the model.
         """
-        if 'lang' in goal:
+        if 'lang' in goal or 'lang_text' in goal:
             if self.use_text_not_embedding:
                 # print(goal.keys())
                 latent_goal = self.language_goal(goal["lang_text"])
@@ -706,9 +751,14 @@ class MDTVAgent(pl.LightningModule):
         
         rgb_static = obs["rgb_obs"]['rgb_static']
         rgb_gripper = obs["rgb_obs"]['rgb_gripper']
+        # print(rgb_static.shape, rgb_gripper.shape, latent_goal.shape)
 
         perceptual_emb = self.compute_voltron_embeddings(rgb_static, rgb_gripper)
         perceptual_emb['modality'] = "lang"
+
+        if self.use_proprioception:  # use proprioception data
+            assert "robot_obs" in obs, "use_proprioception needs `robot_obs` in obs.keys()"
+            perceptual_emb['state_obs'] = obs['robot_obs'].to(latent_goal.dtype)
         
         act_seq = self.denoise_actions(
             torch.zeros_like(latent_goal).to(latent_goal.device),
@@ -816,6 +866,48 @@ class MDTVAgent(pl.LightningModule):
     def on_validation_epoch_start(self) -> None:
         log_rank_0(f"Start validation epoch {self.current_epoch}")
 
+
+class MDTVAgentTCL(MDTVAgent):
+    """
+    Son class of MDTVAgent, dedicated for OXE training.
+    """
+
+    def compute_input_embeddings(self, dataset_batch):
+        """
+        Compute the required embeddings for the visual ones and the latent goal.
+        """
+        # 1. extract the revelant visual observations
+        latent_goal = None
+        rgb_static_goal = dataset_batch["rgb_obs"]['rgb_static'][:, -1]
+        rgb_static = dataset_batch["rgb_obs"]['rgb_static'] # unlike mdt dataset, we do not append gen_image back
+
+        rgb_gripper = dataset_batch["rgb_obs"]['rgb_gripper']
+        modality = "vis"
+        # 2. Compute the latent goal embedding for the visual goal
+        if not isinstance(self.visual_goal, NoEncoder):
+            latent_goal = self.visual_goal(rgb_static_goal).to(rgb_static.dtype)
+
+        lang_text = dataset_batch["lang_text"] if "lang" in self.modality_scope else None
+
+        # 3. we compute the language goal if the language modality is in the scope
+        if "lang" in self.modality_scope:
+            modality = "lang"
+            image_latent_goal = latent_goal.to(rgb_static.dtype)
+            if self.use_text_not_embedding:
+                latent_goal = self.language_goal(dataset_batch["lang_text"]).to(rgb_static.dtype)
+            else:
+                latent_goal = self.language_goal(dataset_batch["lang"]).to(rgb_static.dtype)
+        else:
+            image_latent_goal = None
+
+        perceptual_emb = self.compute_voltron_embeddings(rgb_static, rgb_gripper)
+        perceptual_emb['modality'] = modality
+
+        if self.use_proprioception:  # use proprioception data
+            assert "robot_obs" in dataset_batch, "use_proprioception needs `robot_obs` in dataset_batch.keys()"
+            perceptual_emb['state_obs'] = dataset_batch['robot_obs']
+
+        return perceptual_emb, latent_goal, image_latent_goal
 
     
 @rank_zero_only

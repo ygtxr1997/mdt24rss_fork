@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 from typing import List, Union
 import os
+import warnings
 
 import numpy as np
 from tqdm import tqdm
@@ -37,7 +38,7 @@ def print_leaf(prefix, x):
         if x.ndim == 0:
             print(f'{prefix},{type(x)},shape={x.shape}, {x}')
         else:
-            print(f'{prefix},{type(x)},shape={x.shape}')
+            print(f'{prefix},{type(x)},shape={x.shape},min={float(x.min()):.2f},max={float(x.max()):.2f}')
     elif isinstance(x, bool) or isinstance(x, int):
         print(f'{prefix}:{type(x)},{x}')
     else:
@@ -63,7 +64,9 @@ def print_batch(prefix, x, depth=0):
         if isinstance(x[0], torch.Tensor) or isinstance(x[0], np.ndarray):
             print_batch(('-' * depth) + '[0]', x[0], depth + 1)
     else:
-        raise TypeError(f'type {type(x)} not supported. x must be torch.Tensor or list or dict')
+        warnings.warn(f'type {type(x)} not supported. x must be torch.Tensor or list or dict')
+        print(f'{prefix}: {type(x)}')
+
 
 def cmp_two_tensors(b1, b2):
     if isinstance(b1, np.ndarray) and isinstance(b2, np.ndarray):
@@ -115,7 +118,7 @@ def cmp_two_dataloaders():
     exit()
 
 
-@hydra.main(config_path="../conf", config_name="libero90_hk")
+@hydra.main(config_path="../conf", config_name="config_tcl_hk")
 def main(cfg: DictConfig) -> None:
     # check paths
     if hasattr(cfg, 'root_data_dir'):
@@ -189,6 +192,25 @@ def main(cfg: DictConfig) -> None:
     lang,<class 'torch.Tensor'>,shape=torch.Size([16, 0])
     idx,<class 'torch.Tensor'>,shape=torch.Size([16])
     future_frame_diff,<class 'torch.Tensor'>,shape=torch.Size([16])
+    
+    
+    TCL
+    Batch@0th: Dict,keys=dict_keys(['robot_obs', 'rgb_obs', 'depth_obs', 'actions', 'state_info', 'lang', 'lang_text', 'idx', 'future_frame_diff'])
+    robot_obs,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 8]),min=-3.13,max=3.13
+    rgb_obs: Dict,keys=dict_keys(['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper'])
+    -rgb_static,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 3, 224, 224]),min=-1.00,max=1.00
+    -rgb_gripper,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 3, 84, 84]),min=-1.00,max=1.00
+    -gen_static,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 3, 112, 112]),min=-1.00,max=1.00
+    -gen_gripper,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 3, 112, 112]),min=-1.00,max=1.00
+    depth_obs: Dict,keys=dict_keys([])
+    actions,<class 'torch.Tensor'>,shape=torch.Size([128, 10, 7]),min=-1.00,max=1.00
+    state_info: Dict,keys=dict_keys(['scene_obs', 'robot_obs'])
+    -scene_obs,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 24]),min=0.00,max=0.00
+    -robot_obs,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 15]),min=0.00,max=0.00
+    lang: Dict,keys=dict_keys([])
+    lang_text: List,len=128,elem:<class 'str'>
+    idx,<class 'torch.Tensor'>,shape=torch.Size([128]),min=893.00,max=106839.00
+    future_frame_diff,<class 'torch.Tensor'>,shape=torch.Size([128]),min=3.00,max=3.00
     '''
 
 

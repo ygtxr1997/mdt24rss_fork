@@ -191,6 +191,8 @@ class MDTVTransformer(nn.Module):
             "number of parameters: %e", sum(p.numel() for p in self.parameters())
         )
 
+        self.warning_state_obs = False
+
     def get_block_size(self):
         return self.block_size
 
@@ -223,7 +225,7 @@ class MDTVTransformer(nn.Module):
 
     def forward_dec_only(self, context, actions, sigma):
         emb_t = self.process_sigma_embeddings(sigma)
-        action_embed = self.action_emb(actions)
+        action_embed = self.action_emb(actions.to(self.action_emb.weight.dtype))
         action_x = self.drop(action_embed)
 
 
@@ -270,7 +272,9 @@ class MDTVTransformer(nn.Module):
         states_global = self.tok_emb(states['state_images'])
         if 'state_obs' in states:
             proprio_embed = self.proprio_emb(states['state_obs'])
-            print('[Warning] Using state_obs!')
+            if not self.warning_state_obs:
+                print('[Warning] Using state_obs!')
+                self.warning_state_obs = True
         else:
             proprio_embed = None
         return states_global, proprio_embed
@@ -295,6 +299,10 @@ class MDTVTransformer(nn.Module):
         return goal_x, state_x, action_x, proprio_x
 
     def concatenate_inputs(self, emb_t, goal_x, state_x, proprio_x, uncond=False):
+        # emb_t is None when self.use_ada_conditioning=True
+        # print(goal_x.shape)  (B,1,384)
+        # print(state_x.shape)  (B,3,384)
+        # print(proprio_x.shape)  (B,1,384)
         input_seq_components = [state_x]
 
         if self.goal_conditioned:
@@ -310,7 +318,7 @@ class MDTVTransformer(nn.Module):
             input_seq_components.insert(0, emb_t)
 
         input_seq = torch.cat(input_seq_components, dim=1)
-        return input_seq
+        return input_seq  # (B,4,384) if proprio_x is None else (B,5,384)
 
     def mask_cond(self, cond, force_mask=False):
         bs, t, d = cond.shape

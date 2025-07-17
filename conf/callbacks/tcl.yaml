@@ -1,0 +1,3 @@
+# conf/callbacks/tcl.yaml
+defaults:
+  - checkpoint: save_topk  # ori:lh_sr, choices:`save_model`

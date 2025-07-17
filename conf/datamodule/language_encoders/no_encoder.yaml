@@ -1,0 +1,4 @@
+_target_: uha.data.language_encoders.no_encoder.NoEncoder
+_recursive_: false
+
+model_name: null

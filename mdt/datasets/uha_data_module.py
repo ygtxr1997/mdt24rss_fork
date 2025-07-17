@@ -84,6 +84,29 @@ class OxeUhaDataModule(pl.LightningDataModule):
               f'Val len={len(self.val_loader)}. Info: {self.dataset_info}')
 
     def train_dataloader(self):
+        """
+        OXE_BATCH: Dict,keys=dict_keys(['observation', 'task', 'action', 'action_pad_mask'])
+        observation: Dict,keys=dict_keys(['image_primary', 'image_secondary', 'image_wrist', 'timestep', 'pad_mask_dict', 'timestep_pad_mask', 'task_completed'])
+        -image_primary,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 3, 224, 224])
+        -image_secondary,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 3, 224, 224])
+        -image_wrist,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 3, 84, 84])
+        -timestep,<class 'torch.Tensor'>,shape=torch.Size([128, 1])
+        -pad_mask_dict: Dict,keys=dict_keys(['image_primary', 'image_secondary', 'image_wrist', 'timestep'])
+        --image_primary,<class 'torch.Tensor'>,shape=torch.Size([128, 1])
+        --image_secondary,<class 'torch.Tensor'>,shape=torch.Size([128, 1])
+        --image_wrist,<class 'torch.Tensor'>,shape=torch.Size([128, 1])
+        --timestep,<class 'torch.Tensor'>,shape=torch.Size([128, 1])
+        -timestep_pad_mask,<class 'torch.Tensor'>,shape=torch.Size([128, 1])
+        -task_completed,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 10])
+        task: Dict,keys=dict_keys(['language_instruction', 'language_key', 'pad_mask_dict'])
+        -language_instruction: List,len=1,elem:<class 'list'>
+        -language_key,<class 'torch.Tensor'>,shape=torch.Size([128])
+        -pad_mask_dict: Dict,keys=dict_keys(['language_instruction', 'language_key'])
+        --language_instruction,<class 'torch.Tensor'>,shape=torch.Size([128])
+        --language_key,<class 'torch.Tensor'>,shape=torch.Size([128])
+        action,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 10, 7])
+        action_pad_mask,<class 'torch.Tensor'>,shape=torch.Size([128, 1, 10, 7])
+        """
         return self.train_loader
 
     def val_dataloader(self):

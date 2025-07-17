@@ -18,6 +18,7 @@ class TCLImageDataset(torch.utils.data.Dataset):
                  pad_after: int,
                  # Data format
                  shape_meta: dict,
+                 norm_action_type: str = "minmax",
                  # MDT related
                  batch_size: int = 64,
                  num_workers: int = 8,
@@ -49,12 +50,21 @@ class TCLImageDataset(torch.utils.data.Dataset):
                 data_root, h5_path,
                 use_extracted=True, load_keys=self.load_keys)
         self.data_meta = self.tcl_dataset.load_statistics_from_json(os.path.join(data_root, "statistics.json"))
+        self.norm_action_type = norm_action_type
+        assert self.norm_action_type in ["minmax", "mean", "identity"], "norm type must be minmax, mean, or identity"
         self.all_rel_actions = self.tcl_dataset.extracted_data["rel_actions"]
         self.dataset_min = np.array(self.data_meta["min"])
         self.dataset_max = np.array(self.data_meta["max"])
         self.dataset_mean = np.array(self.data_meta["mean"])
         self.dataset_std = np.array(self.data_meta["std"])
         self.dataset_total_len = self.data_meta["total_len"]
+        self.dataset_meta_dict = {
+            'min': self.dataset_min, 'max': self.dataset_max, 'mean': self.dataset_mean, 'std': self.dataset_std,
+        }
+        if self.norm_action_type == "mean":
+            eps = 1e-6  # 或者其他合适的小值
+            assert np.all(self.dataset_std > eps), \
+                f"Some std values too small: {self.dataset_std}, min_std={self.dataset_std.min()}"
 
         self.tasks = self.tcl_dataset.tasks
         self.task_lengths = self.tcl_dataset.task_lengths
@@ -135,9 +145,19 @@ class TCLImageDataset(torch.utils.data.Dataset):
         self.gen_transform = transforms.Compose(gen_transform_list)
 
         print(f"[TCLImageDataset] dataset loaded, split={self.split}, val_ratio={self.val_ratio}, len={len(self)}; "
-              f"total_len={self.dataset_total_len}, "
-              f"action_min={self.dataset_min:.6f}, action_max={self.dataset_max:.6f}, "
-              f"action_mean={self.dataset_mean:.6f}, action_std={self.dataset_std:.6f}")
+              f"total_len={self.dataset_total_len}, norm_type={self.norm_action_type}, "
+              f"action_min={self.dataset_min}, action_max={self.dataset_max}, "
+              f"action_mean={self.dataset_mean}, action_std={self.dataset_std}")
+
+    @staticmethod
+    def save_meta_as_json(data_meta: dict, save_path: str):
+        import json
+        save_dir = os.path.dirname(save_path)
+        if not os.path.exists(save_dir):
+            print("[Warning] making dir {}".format(save_dir))
+            os.makedirs(save_dir, exist_ok=True)
+        with open(save_path, "w") as fp:
+            json.dump(data_meta, fp, indent=4)
 
     def get_validation_dataset(self):
         return self.create_val_dataset(self)
@@ -150,6 +170,7 @@ class TCLImageDataset(torch.utils.data.Dataset):
             pad_before=instance.pad_before,
             pad_after=instance.pad_after,
             shape_meta=instance.shape_meta,
+            norm_action_type=instance.norm_action_type,
             seed=instance.seed,
             val_ratio=instance.val_ratio,
             split='val',
@@ -319,5 +340,243 @@ class TCLImageDataset(torch.utils.data.Dataset):
                 rel_action = self.all_rel_actions[idx]  # (7,)
                 act_data.append(rel_action)
         act_data = np.stack(act_data)  # (T,7), in [act_min, act_max]
-        act_data = (act_data - self.dataset_min) / (self.dataset_max - self.dataset_min)  # norm here, in [0,1]
-        return act_data * 2. - 1.  # in [-1,1]
+
+        act_data = self.norm_action(act_data, self.norm_action_type, self.dataset_meta_dict)
+
+        return act_data
+
+    @staticmethod
+    def norm_action(action_data, norm_type: str, meta_data: dict):
+        # Consider different norm types
+        if norm_type == "minmax":
+            dataset_min = meta_data['min']
+            dataset_max = meta_data['max']
+            action_data = (action_data - dataset_min) / (dataset_max - dataset_min)  # norm here, in [0,1]
+            action_data = action_data * 2. - 1.  # in [-1,1]
+        elif norm_type == "mean":
+            dataset_min = meta_data['min']
+            dataset_max = meta_data['max']
+            dataset_mean = meta_data['mean']
+            dataset_std = meta_data['std']
+            # Split into pose (first 6 dims) and gripper (last dim)
+            pose_data = action_data[..., :-1]  # (T, 6)
+            gripper_data = action_data[..., -1:]  # (T, 1)
+
+            # Normalize pose with mean/std
+            pose_normalized = (pose_data - dataset_mean[:-1]) / dataset_std[:-1]
+
+            # Normalize gripper with minmax
+            gripper_normalized = (gripper_data - dataset_min[-1:]) / (
+                    dataset_max[-1:] - dataset_min[-1:])
+            gripper_normalized = gripper_normalized * 2. - 1.  # to [-1,1]
+
+            # Concatenate back
+            action_data = np.concatenate([pose_normalized, gripper_normalized], axis=-1)
+        else:
+            assert norm_type == "identity"
+            action_data = action_data
+        return action_data
+
+
+class TCLMergeDataset(torch.utils.data.Dataset):
+    def __init__(self,
+                 # RoboKit Dataset
+                 data_roots: list,  # List of data root paths, Difference (1)
+                 # Data sequence
+                 horizon: int,
+                 pad_before: int,
+                 pad_after: int,
+                 # Data format
+                 shape_meta: dict,
+                 norm_action_type: str = "minmax",
+                 # MDT related
+                 batch_size: int = 64,
+                 num_workers: int = 8,
+                 key: str = "lang",
+                 chose_ratio: float = 1.,
+                 img_gen_frame_diff: int = 3,
+                 # Others
+                 seed: int = 42,
+                 val_ratio: float = 0.01,
+                 split: str = "train",
+                 val_sets: list = None,  # Pre-created validation datasets for val split, Difference (2)
+                 max_train_episodes: int = 90,
+                 transform_color_jitter: bool = True,
+                 # RoboKit Dataset
+                 h5_paths: list = None,  # Difference (3)
+                 use_h5: bool = False,
+                 **kwargs
+                 ):
+        self.data_roots = data_roots
+        self.h5_paths = h5_paths
+
+        self.seed = seed
+        self.val_ratio = val_ratio
+        self.split = split
+        self.norm_action_type = norm_action_type
+
+        # Create individual TCLImageDatasets with identity normalization
+        if split == "train":
+            # Create datasets from data_roots
+            self.datasets = []
+            self.dataset_lengths = []
+            self.val_datasets = []  # Store validation datasets
+
+            for data_idx, data_root in enumerate(self.data_roots):
+                dataset = TCLImageDataset(
+                    data_root=data_root,  # different across sub-datasets
+                    horizon=horizon,
+                    pad_before=pad_before,
+                    pad_after=pad_after,
+                    shape_meta=shape_meta,
+                    norm_action_type="identity",  # Use identity first, we'll handle norm later
+                    seed=seed,
+                    val_ratio=val_ratio,
+                    split=split,
+                    h5_path=h5_paths[data_idx],  # different across sub-datasets
+                    use_h5=use_h5,
+                    max_train_episodes=max_train_episodes,
+                    transform_color_jitter=transform_color_jitter,
+                    **kwargs
+                )
+                self.datasets.append(dataset)
+                self.dataset_lengths.append(len(dataset))
+
+                # Create validation dataset if this is a train split
+                val_dataset = dataset.get_validation_dataset()
+                self.val_datasets.append(val_dataset)
+        elif split == "val":
+            assert val_sets is not None, "val_sets must not be None for val split"
+            # Use pre-created validation datasets
+            self.datasets = val_sets
+            self.dataset_lengths = [len(d) for d in val_sets]
+            self.val_datasets = []  # Empty for val split
+        else:
+            raise NotImplementedError("split type not supported")
+
+        # Merge metadata for action normalization
+        self._merge_metadata()
+
+        # Validate norm_action_type
+        assert self.norm_action_type in ["minmax", "mean", "identity"], "norm type must be minmax, mean, or identity"
+        if self.norm_action_type == "mean":
+            eps = 1e-6
+            assert np.all(self.merged_std > eps), \
+                f"Some std values too small: {self.merged_std}, min_std={self.merged_std.min()}"
+
+        # Copy other attributes from first dataset for compatibility
+        first_dataset = self.datasets[0]
+        self.horizon = first_dataset.horizon
+        self.pad_before = first_dataset.pad_before
+        self.pad_after = first_dataset.pad_after
+        self.shape_meta = first_dataset.shape_meta
+        self.img_gen_frame_diff = first_dataset.img_gen_frame_diff
+        self.action_shape = first_dataset.action_shape
+
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.chose_ratio = chose_ratio
+        self.img_gen_frame_diff = img_gen_frame_diff
+
+        print(f"[TCLMergeDataset] datasets loaded from {len(data_roots)} roots, "
+              f"split={self.split}, val_ratio={self.val_ratio}, len={len(self)}; "
+              f"total_len={self.merged_total_len}, norm_type={self.norm_action_type}, "
+              f"action_min={self.merged_min}, action_max={self.merged_max}, "
+              f"action_mean={self.merged_mean}, action_std={self.merged_std}")
+
+    def _merge_metadata(self):
+        """Merge metadata from all datasets"""
+        all_mins = []
+        all_maxs = []
+        all_means = []
+        all_stds = []
+        all_total_lens = []
+
+        for dataset in self.datasets:
+            all_mins.append(dataset.dataset_min)
+            all_maxs.append(dataset.dataset_max)
+            all_means.append(dataset.dataset_mean)
+            all_stds.append(dataset.dataset_std)
+            all_total_lens.append(dataset.dataset_total_len)
+
+        # Calculate merged statistics
+        self.merged_min = np.min(all_mins, axis=0)
+        self.merged_max = np.max(all_maxs, axis=0)
+        self.merged_total_len = sum(all_total_lens)
+
+        # Calculate weighted mean and std
+        total_samples = sum(all_total_lens)
+        weighted_mean = np.zeros_like(all_means[0])
+        for mean, length in zip(all_means, all_total_lens):
+            weighted_mean += mean * length / total_samples
+        self.merged_mean = weighted_mean
+
+        # Calculate merged std using formula: var = E[X^2] - (E[X])^2
+        weighted_var = np.zeros_like(all_stds[0])
+        for mean, std, length in zip(all_means, all_stds, all_total_lens):
+            var = std ** 2
+            second_moment = var + mean ** 2
+            weighted_var += second_moment * length / total_samples
+        merged_var = weighted_var - self.merged_mean ** 2
+        self.merged_std = np.sqrt(merged_var)
+
+        self.merged_meta_dict = {
+            'min': self.merged_min, 'max': self.merged_max, 'mean': self.merged_mean, 'std': self.merged_std,
+        }
+
+    def save_meta(self, save_json_path: str):
+        meta_statistics = {
+            "min": self.merged_min.tolist(),
+            "max": self.merged_max.tolist(),
+            "mean": self.merged_mean.tolist(),
+            "std": self.merged_std.tolist(),
+            "total_len": int(self.merged_total_len),
+        }
+        TCLImageDataset.save_meta_as_json(meta_statistics, save_json_path)
+        print(f"[TCLMergeDataset] Meta data saved to: {save_json_path}")
+
+    def get_validation_dataset(self):
+        return self.create_val_dataset(self)
+
+    @classmethod
+    def create_val_dataset(cls, instance: 'TCLMergeDataset'):
+        """Create validation dataset using pre-created validation sets"""
+        if not hasattr(instance, 'val_datasets') or not instance.val_datasets:
+            raise ValueError("No validation datasets available. Make sure this is a train dataset.")
+
+        val_set = cls(
+            data_roots=instance.data_roots,  # Keep for compatibility
+            horizon=instance.horizon,
+            pad_before=instance.pad_before,
+            pad_after=instance.pad_after,
+            shape_meta=instance.shape_meta,
+            norm_action_type=instance.norm_action_type,  # Use the same norm type for val_set
+            seed=instance.seed,
+            val_ratio=instance.val_ratio,
+            split='val',
+            val_sets=instance.val_datasets,  # Pass pre-created validation datasets
+        )
+        return val_set
+
+    def __len__(self):
+        return sum(self.dataset_lengths)
+
+    def __getitem__(self, idx):
+        # Find which dataset this index belongs to
+        current_idx = idx
+        for i, dataset in enumerate(self.datasets):
+            if current_idx < len(dataset):
+                item_data = dataset.__getitem__(current_idx)
+
+                # Update the idx field to reflect the global index
+                item_data["idx"] = idx
+
+                # Apply merged normalization to actions
+                item_data["actions"] = TCLImageDataset.norm_action(
+                    item_data["actions"], self.norm_action_type, meta_data=self.merged_meta_dict
+                )
+
+                return item_data
+            current_idx -= len(dataset)
+
+        raise IndexError(f"Index {idx} out of range")

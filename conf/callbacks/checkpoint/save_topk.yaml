@@ -1,0 +1,9 @@
+_target_: mdt.callbacks.save_topk.ManuallySaveModelCallback
+dirpath: checkpoints/
+monitor: "val_act/action_loss"
+save_top_k: 3
+mode: "min"
+save_last: True
+verbose: True
+filename: "model-e{epoch:02d}-loss{val_act/action_loss:.4f}"
+every_n_epochs: 3  # main config uses val

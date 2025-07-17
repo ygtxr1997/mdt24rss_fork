@@ -26,7 +26,7 @@ from debug.de_dataset import DebugDatamodule, DebugModel
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(config_path="../conf", config_name="config_d_hk")
+@hydra.main(config_path="../conf", config_name="da_oxe_hk")  # da_oxe_hk, config_oxe_hk
 # @hydra.main(config_path="../logs/runs/2023-09-10/17-52-50/.hydra", config_name="config")
 def train(cfg: DictConfig) -> None:
     """
@@ -44,15 +44,15 @@ def train(cfg: DictConfig) -> None:
 
     ''' data '''
     ## Op1. Debug
-    datamodule = DebugDatamodule()
+    # datamodule = DebugDatamodule()
     ## Op2. Real run
-    # datamodule = hydra.utils.instantiate(cfg.datamodule)
+    datamodule = hydra.utils.instantiate(cfg.datamodule)
 
     ''' model '''
     ## Op1. Debug
-    model = DebugModel()
+    # model = DebugModel()
     ## Op2. Real run
-    # model = hydra.utils.instantiate(cfg.model)
+    model = hydra.utils.instantiate(cfg.model)
 
     log_rank_0(f"Training with the following config:\n{OmegaConf.to_yaml(cfg)}")
     log_rank_0("Repo commit hash: {}".format(get_git_commit_hash(Path(hydra.utils.to_absolute_path(__file__)))))

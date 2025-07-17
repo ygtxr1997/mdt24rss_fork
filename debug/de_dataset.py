@@ -150,13 +150,47 @@ class DebugModel(LightningModule):
     def forward(self, x):
         return self.layer(x)
     def training_step(self, batch, batch_idx):
-        if 'robot_obs' in batch["vis"].keys():
-            data = batch["vis"]["robot_obs"]
-        else:
-            data = batch["vis"]["data"]
+        if 'vis' in batch:  # CALVIN,LIBERO dataloader
+            if 'robot_obs' in batch["vis"].keys():
+                data = batch["vis"]["robot_obs"]
+            else:
+                data = batch["vis"]["data"]
+            data_idx = batch["vis"]["idx"]
+        else:  # uha dataloader
+            print_batch('OXE_BATCH', batch)
+
+            if "observation" in batch:  # OXE dataloader
+                data = batch['observation']['image_primary'].float()
+                data_idx = batch['observation']['timestep'][0].long()
+
+                sample = batch
+                lang_text = sample['task']['language_instruction']
+                # print(lang_text)
+
+                image_primary = sample['observation']['image_primary'].float()  # in [0,255]
+                image_wrist = sample['observation']['image_wrist'].float()  # all zero
+                print(type(image_wrist))
+                print(image_wrist.mean(), image_wrist.max(), image_wrist.min(), )
+
+                act1 = sample['action'][:, :, :, 0]
+                # print(act1.mean(), act1.max(), act1.min())  # in [-1,1]
+                act1 = sample['action'][:, :, :, 3]
+                # print(act1.mean(), act1.max(), act1.min())  # in [-1,1]
+                act1 = sample['action'][:, :, :, 6]
+                # print(act1.mean(), act1.max(), act1.min())  # in [0,1]
+            else:  # OXE DA dataloader
+                sample = batch['target']  # check target data
+                image_primary = sample['observation']['image_primary'].float()  # in [0,255]
+                print(type(image_primary))
+                print(image_primary.mean(), image_primary.max(), image_primary.min(), )
+                image_wrist = sample['observation']['image_wrist'].float()  # all zero
+                print(type(image_wrist))
+                print(image_wrist.mean(), image_wrist.max(), image_wrist.min(), )
+
+            exit(66)
+
         data = data.mean() * (torch.randn(1, 3, 112, 112).to(data.device))
 
-        data_idx = batch["vis"]["idx"]
         if int(data_idx) == 0:
             print(f'[DEBUG] Rank@{os.environ["LOCAL_RANK"]}: {batch_idx} indices={data_idx}')
         return self.forward(data).mean()

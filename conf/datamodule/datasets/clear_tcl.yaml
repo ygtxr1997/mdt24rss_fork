@@ -1,0 +1,30 @@
+# conf/datamodule/datasets/clear_tcl.yaml
+lang_dataset:
+  _target_: mdt.datasets.tcl_dataset.TCLImageDataset
+  key: "lang"  # compatible with MDT
+  batch_size: ${batch_size}
+  num_workers: ${num_workers}
+  shape_meta:
+    obs:
+      image: # static
+        shape: [3, 224, 224]
+        type: rgb
+      gripper: # gripper
+        shape: [3, 224, 224]  # ori:[3, 84, 84]
+        type: rgb
+      joint_state:
+        shape: [ 6 ]
+        type: low_dim
+    action:
+      shape: [ 7 ]
+  norm_action_type: "mean"  # ori:minmax
+  horizon: 10  # ori:32  # predict action length
+  max_train_episodes: 90
+  pad_before: 0
+  pad_after: 7
+  seed: 42
+  val_ratio: 0.01
+#  data_root: "/home/geyuan/local_soft/TCL/0704_pepper_source/"
+#  h5_path: "/home/geyuan/local_soft/TCL/hdf5/0704_pepper_source_240p.h5"
+  use_h5: true
+  transform_color_jitter: true

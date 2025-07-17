@@ -1,4 +1,4 @@
-# conf/model/domain_adapt/wgan.yaml
+# conf/model/domain_adapt/wgan_oxe.yaml
 
 visual_da:
   _target_: mdt.models.domain_adapt.wgan.WGAN_GP
@@ -18,7 +18,7 @@ action_da:
   use_ada: true
   use_cond_dist: false
 
-use_da_visual: 'both'  # static,gripper,both,false
+use_da_visual: 'static'  # static,gripper,both,false
 use_da_act: true
 act_loss_from: "mlp"  # ori:`k,v`, choices:`k`,`v`,`q`,`sa`,`ca`,`attn`,`softmax`,`mlp`
 act_layers: 6  # ori:6, choices:6,1,-1
