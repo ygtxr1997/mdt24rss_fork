@@ -35,6 +35,7 @@ class TCLImageDataset(torch.utils.data.Dataset):
                  # RoboKit Dataset
                  h5_path: str = None,
                  use_h5: bool = False,
+                 statistics_path: str = None,  # if None, loading `statistics.json' from data root
                  ):
         # RoboKit Dataset
         self.data_root = data_root
@@ -49,7 +50,9 @@ class TCLImageDataset(torch.utils.data.Dataset):
             self.tcl_dataset = TCLDatasetHDF5(
                 data_root, h5_path,
                 use_extracted=True, load_keys=self.load_keys)
-        self.data_meta = self.tcl_dataset.load_statistics_from_json(os.path.join(data_root, "statistics.json"))
+        if statistics_path is None:
+            statistics_path = os.path.join(data_root, "statistics.json")
+        self.data_meta = self.tcl_dataset.load_statistics_from_json(statistics_path)
         self.norm_action_type = norm_action_type
         assert self.norm_action_type in ["minmax", "mean", "identity"], "norm type must be minmax, mean, or identity"
         self.all_rel_actions = self.tcl_dataset.extracted_data["rel_actions"]
@@ -145,7 +148,7 @@ class TCLImageDataset(torch.utils.data.Dataset):
         self.gen_transform = transforms.Compose(gen_transform_list)
 
         print(f"[TCLImageDataset] dataset loaded, split={self.split}, val_ratio={self.val_ratio}, len={len(self)}; "
-              f"total_len={self.dataset_total_len}, norm_type={self.norm_action_type}, "
+              f"meta_total_len={self.dataset_total_len}, norm_type={self.norm_action_type}, "
               f"action_min={self.dataset_min}, action_max={self.dataset_max}, "
               f"action_mean={self.dataset_mean}, action_std={self.dataset_std}")
 
@@ -405,6 +408,7 @@ class TCLMergeDataset(torch.utils.data.Dataset):
                  # RoboKit Dataset
                  h5_paths: list = None,  # Difference (3)
                  use_h5: bool = False,
+                 statistics_path: str = None,
                  **kwargs
                  ):
         self.data_roots = data_roots
@@ -455,6 +459,7 @@ class TCLMergeDataset(torch.utils.data.Dataset):
             raise NotImplementedError("split type not supported")
 
         # Merge metadata for action normalization
+        self.statistics_path = statistics_path
         self._merge_metadata()
 
         # Validate norm_action_type
@@ -480,45 +485,56 @@ class TCLMergeDataset(torch.utils.data.Dataset):
 
         print(f"[TCLMergeDataset] datasets loaded from {len(data_roots)} roots, "
               f"split={self.split}, val_ratio={self.val_ratio}, len={len(self)}; "
-              f"total_len={self.merged_total_len}, norm_type={self.norm_action_type}, "
+              f"meta_total_len={self.merged_total_len}, norm_type={self.norm_action_type}, "
               f"action_min={self.merged_min}, action_max={self.merged_max}, "
               f"action_mean={self.merged_mean}, action_std={self.merged_std}")
 
     def _merge_metadata(self):
         """Merge metadata from all datasets"""
-        all_mins = []
-        all_maxs = []
-        all_means = []
-        all_stds = []
-        all_total_lens = []
+        if self.statistics_path is not None:
+            import json
+            print("[TCLMergeDataset] loading dataset statistics from:", self.statistics_path)
+            with open(self.statistics_path, 'r') as json_file:
+                statistics = json.load(json_file)
+            self.merged_min = np.array(statistics["min"])
+            self.merged_max = np.array(statistics["max"])
+            self.merged_mean = np.array(statistics["mean"])
+            self.merged_std = np.array(statistics["std"])
+            self.merged_total_len = statistics["total_len"]
+        else:  # Calculate merged statistics
+            all_mins = []
+            all_maxs = []
+            all_means = []
+            all_stds = []
+            all_total_lens = []
 
-        for dataset in self.datasets:
-            all_mins.append(dataset.dataset_min)
-            all_maxs.append(dataset.dataset_max)
-            all_means.append(dataset.dataset_mean)
-            all_stds.append(dataset.dataset_std)
-            all_total_lens.append(dataset.dataset_total_len)
+            for dataset in self.datasets:
+                all_mins.append(dataset.dataset_min)
+                all_maxs.append(dataset.dataset_max)
+                all_means.append(dataset.dataset_mean)
+                all_stds.append(dataset.dataset_std)
+                all_total_lens.append(dataset.dataset_total_len)
 
-        # Calculate merged statistics
-        self.merged_min = np.min(all_mins, axis=0)
-        self.merged_max = np.max(all_maxs, axis=0)
-        self.merged_total_len = sum(all_total_lens)
+            # Calculate merged statistics
+            self.merged_min = np.min(all_mins, axis=0)
+            self.merged_max = np.max(all_maxs, axis=0)
+            self.merged_total_len = sum(all_total_lens)
 
-        # Calculate weighted mean and std
-        total_samples = sum(all_total_lens)
-        weighted_mean = np.zeros_like(all_means[0])
-        for mean, length in zip(all_means, all_total_lens):
-            weighted_mean += mean * length / total_samples
-        self.merged_mean = weighted_mean
+            # Calculate weighted mean and std
+            total_samples = sum(all_total_lens)
+            weighted_mean = np.zeros_like(all_means[0])
+            for mean, length in zip(all_means, all_total_lens):
+                weighted_mean += mean * length / total_samples
+            self.merged_mean = weighted_mean
 
-        # Calculate merged std using formula: var = E[X^2] - (E[X])^2
-        weighted_var = np.zeros_like(all_stds[0])
-        for mean, std, length in zip(all_means, all_stds, all_total_lens):
-            var = std ** 2
-            second_moment = var + mean ** 2
-            weighted_var += second_moment * length / total_samples
-        merged_var = weighted_var - self.merged_mean ** 2
-        self.merged_std = np.sqrt(merged_var)
+            # Calculate merged std using formula: var = E[X^2] - (E[X])^2
+            weighted_var = np.zeros_like(all_stds[0])
+            for mean, std, length in zip(all_means, all_stds, all_total_lens):
+                var = std ** 2
+                second_moment = var + mean ** 2
+                weighted_var += second_moment * length / total_samples
+            merged_var = weighted_var - self.merged_mean ** 2
+            self.merged_std = np.sqrt(merged_var)
 
         self.merged_meta_dict = {
             'min': self.merged_min, 'max': self.merged_max, 'mean': self.merged_mean, 'std': self.merged_std,
@@ -555,6 +571,7 @@ class TCLMergeDataset(torch.utils.data.Dataset):
             val_ratio=instance.val_ratio,
             split='val',
             val_sets=instance.val_datasets,  # Pass pre-created validation datasets
+            transform_color_jitter=False,  # No aug for val_set
         )
         return val_set
 

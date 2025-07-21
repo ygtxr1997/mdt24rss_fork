@@ -150,7 +150,7 @@ class AdaLNZero(nn.Module):
 
 class Discriminator1d(torch.nn.Module):
     def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False,
-                 ndim: int = 2, time_dim: int = 10, use_bn: bool = True,
+                 ndim: int = 2, time_dim: int = 10, use_bn: bool = True, **kwargs,
                  ):
         super(Discriminator1d, self).__init__()
         down_scale = min(4, in_dim // 64)
@@ -184,6 +184,8 @@ class Discriminator1d(torch.nn.Module):
         self.dropout = nn.Dropout(dropout)
         if in_dim < 256:
             self.logit_out = nn.Linear(inner_dim * 8 * 1, 1, bias=False)
+        elif in_dim == 1152:  # specific setting for some dimensions
+            self.logit_out = nn.Linear(inner_dim * 8 * 5, 1, bias=False)
         else:
             self.logit_out = nn.Linear(inner_dim * 8 * (in_dim // 256), 1, bias=False)
 
@@ -334,7 +336,7 @@ class DiscriminatorFiLM1d(nn.Module):
 
 class Discriminator2d(torch.nn.Module):
     def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False,
-                 ndim: int = 3, time_dim: int = 10, use_bn: bool = True,
+                 ndim: int = 3, time_dim: int = 10, sigma_dim: int = 512, use_bn: bool = True,
                  ):
         super(Discriminator2d, self).__init__()
         down_scale = min(4, in_dim // 64)
@@ -367,12 +369,14 @@ class Discriminator2d(torch.nn.Module):
         self.dropout = nn.Dropout(dropout)
         if in_dim < 256:
             self.logit_out = nn.Linear(inner_dim * 8 * 1, 1, bias=False)
+        elif in_dim == 384:  # specific setting for some dimensions
+            self.logit_out = nn.Linear(inner_dim * 8 * 6, 1, bias=False)
         else:
             self.logit_out = nn.Linear(inner_dim * 8 * (in_dim // 256) * 3, 1, bias=False)
 
         self.use_ada = use_ada
         if use_ada:
-            sigma_dim = 512 if not use_cond_dist else 512 * 2
+            sigma_dim = sigma_dim if not use_cond_dist else sigma_dim * 2
             self.cond_mapping = nn.ModuleList([
                 AdaLNZero(inner_dim * 2, in_dim=sigma_dim),
                 AdaLNZero(inner_dim * 4, in_dim=sigma_dim),
@@ -384,7 +388,7 @@ class Discriminator2d(torch.nn.Module):
     def forward(self, x, sigmas=None):  # x:(B,T,D), s:(B,512)
         if x.ndim == 3:  # (B,T,D)
             x = x.unsqueeze(1)  # (B,1,T,D)
-        x = self.stem(x)
+        x = self.stem(x)  # (B,inner_dim*2,T//2,D//16)
 
         for i in range(len(self.convs)):
             x = self.norms[i](x)
@@ -541,6 +545,7 @@ class WGAN_GP(torch.nn.Module):
                  gamma: float = 10,
                  num_layers: int = 1,
                  use_ada: bool = False,
+                 sigma_dim: int = 512,
                  use_cond_dist: bool = False,
                  use_bn: bool = True,
                  ):
@@ -554,7 +559,7 @@ class WGAN_GP(torch.nn.Module):
         for l in range(self.num_layers):
             d_net = self.get_discriminators(in_ndims[l], in_dim=in_dims[l], inner_dim=inner_dim,
                                             use_ada=use_ada, use_cond_dist=use_cond_dist,
-                                            time_dim=time_dim, use_bn=use_bn,
+                                            time_dim=time_dim, use_bn=use_bn, sigma_dim=sigma_dim,
                                             )
             discriminators.append(d_net)
         self.discriminators = nn.ModuleList(discriminators)

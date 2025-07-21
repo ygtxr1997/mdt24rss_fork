@@ -230,6 +230,7 @@ class HulcTCLDataModule(pl.LightningDataModule):
         shuffle_val: bool = False,
         train_ratio: float = 1.,
         val_as_train_ratio: float = 0.,
+        pretrain_chk: str = None,  # will load statistics from provided ckpt dir
         **kwargs: Dict,
     ):
         super().__init__()
@@ -265,6 +266,13 @@ class HulcTCLDataModule(pl.LightningDataModule):
             self.use_shm = True
         else:
             self.use_shm = False
+
+        # For finetuning params
+        self.pretrain_chk = pretrain_chk
+        self.pretrain_statistics_path = None
+        if pretrain_chk is not None:
+            self.pretrain_statistics_path = os.path.join(os.path.dirname(pretrain_chk), "statistics.json")
+            print("[Info][HulcTCLDataModule] Finetuning mode. Loading statistics from:", self.pretrain_statistics_path)
 
     def prepare_data(self, *args, **kwargs):
         # # check if files already exist
@@ -342,6 +350,7 @@ class HulcTCLDataModule(pl.LightningDataModule):
                     h5_path=self.training_h5_path,
                     chose_ratio=1.,
                     # chose_ratio=self.train_ratio,
+                    statistics_path=self.pretrain_statistics_path,
                 )
                 # if self.val_as_train_ratio > 0.:
                 #     val_as_train_dataset = hydra.utils.instantiate(
@@ -412,6 +421,7 @@ class HulcTCLMergeDataModule(pl.LightningDataModule):
         shuffle_val: bool = False,
         train_ratio: float = 1.,
         val_as_train_ratio: float = 0.,
+        pretrain_chk: str = None,
         **kwargs: Dict,
     ):
         super().__init__()
@@ -455,6 +465,13 @@ class HulcTCLMergeDataModule(pl.LightningDataModule):
         else:
             self.use_shm = False
 
+        # For finetuning params
+        self.pretrain_chk = pretrain_chk
+        self.pretrain_statistics_path = None
+        if pretrain_chk is not None:
+            self.pretrain_statistics_path = os.path.join(os.path.dirname(pretrain_chk), "statistics.json")
+            print("[Info][HulcTCLMergeDataModule] Finetuning mode. Loading statistics from:", self.pretrain_statistics_path)
+
     def setup(self, stage=None):
         """
         Called by trainer.fit()
@@ -474,6 +491,7 @@ class HulcTCLMergeDataModule(pl.LightningDataModule):
                     h5_paths=self.training_h5_paths,
                     chose_ratio=1.,
                     # chose_ratio=self.train_ratio,
+                    statistics_path=self.pretrain_statistics_path,
                 )
                 # if self.val_as_train_ratio > 0.:
                 #     val_as_train_dataset = hydra.utils.instantiate(

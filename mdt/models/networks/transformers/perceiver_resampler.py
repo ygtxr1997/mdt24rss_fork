@@ -120,6 +120,46 @@ class PerceiverResampler(nn.Module):
         for param in self.parameters():
             param.requires_grad = trainable
 
+    def freeze_backbone_except_final(self):
+        # Freeze all layers except the last feed-forward layer
+        for i, (attn, ffw) in enumerate(self.layers):
+            # Freeze the attention layer and the feed-forward layer (except the last one)
+            if i < len(self.layers) - 1:
+                for param in attn.parameters():
+                    param.requires_grad = False
+                for param in ffw.parameters():
+                    param.requires_grad = False
+            else:
+                # Keep the last feed-forward layer trainable
+                for param in ffw.parameters():
+                    param.requires_grad = True
+
+    def freeze_backbone_except_first_to_qkv(self):
+        # Freeze all layers except for the first PerceiverAttentionLayer's to_q, to_k, to_v
+        for i, (attn, ffw) in enumerate(self.layers):
+            if i == 0:
+                # Unfreeze the to_q, to_k, and to_v of the first PerceiverAttentionLayer
+                for param in attn.to_q.parameters():
+                    param.requires_grad = True
+                for param in attn.to_k.parameters():
+                    param.requires_grad = True
+                for param in attn.to_v.parameters():
+                    param.requires_grad = True
+
+                # Freeze other parameters in the first attention layer
+                for name, param in attn.named_parameters():
+                    if name not in ['to_q.weight', 'to_k.weight', 'to_v.weight']:
+                        param.requires_grad = False
+            else:
+                # Freeze the entire attention layer and feed-forward layers
+                for param in attn.parameters():
+                    param.requires_grad = False
+                for param in ffw.parameters():
+                    param.requires_grad = False
+
+    def trainable_params(self):
+        return filter(lambda p: p.requires_grad, self.parameters())
+
     def forward(self, x_f: torch.Tensor, mask: torch.BoolTensor = None):
         """Run source_perceiver resampler on the input visual embeddings
 

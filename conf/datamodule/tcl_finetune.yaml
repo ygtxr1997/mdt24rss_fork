@@ -1,0 +1,30 @@
+# conf/datamodule/tcl_finetune.yaml
+defaults:
+  - datasets: merge_tcl  # ori:clear_tcl
+  - transforms: calvin_transforms  # not used
+_target_: mdt.datasets.hulc_data_module.HulcTCLMergeDataModule
+_recursive_: false
+
+root_data_dirs: ${root_data_dir}  # List, e.g ["/home/geyuan/local_soft/TCL/0704_pepper_source/"]
+action_space: 7
+action_max: [1., 1., 1., 1., 1., 1., 1.,]
+action_min: [-1., -1., -1., -1., -1., -1., -1]
+shuffle_val: false
+
+# Finetuning
+pretrain_chk: ${pretrain_chk}
+
+
+observation_space:
+  rgb_obs: ['rgb_static', 'rgb_gripper', 'gen_static', 'gen_gripper']
+  depth_obs: []
+  state_obs: ['robot_obs']
+  actions: ['rel_actions']
+  language: ['language']
+
+proprioception_dims:
+  n_state_obs: 8
+  keep_indices: [[0, 7], [14,15]]
+  robot_orientation_idx: [3, 6]
+  normalize: True
+  normalize_robot_orientation: True

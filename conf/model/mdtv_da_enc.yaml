@@ -1,5 +1,5 @@
 # conf/model/mdtv_da_enc.yaml
-_target_: mdt.models.mdtv_da.MDTVDomainAdaptVisualEncoder
+_target_: mdt.models.mdtv_da.MDTVDomainAdaptVisualEncoderTCL
 _recursive_: false
 
 defaults:
@@ -7,7 +7,7 @@ defaults:
   - visual_goal: clip
   - img_gen: masked_transformer
   - model: mdtv_transformer
-  - domain_adapt: adda  # options:adda,wgan,wgan_1152
+  - domain_adapt: wgan_tcl  # options:adda,wgan,wgan_1152
 
 
 latent_dim: 384
@@ -28,7 +28,8 @@ use_text_not_embedding: True
 #ckpt_path: 'logs/runs/2024-09-15/14-42-57/saved_models/epoch=29_eval_lh/avg_seq_len=1.89.ckpt'  # HK
 #ckpt_path: 'logs/runs/2024-09-08/14-48-31/saved_models/epoch=29_eval_lh/avg_seq_len=1.96.ckpt'  # SLURM
 #ckpt_path: 'logs/runs/2024-09-30/03-19-04/saved_models/epoch=29_eval_lh/avg_seq_len=1.19.ckpt  # HK_rerun
-ckpt_path: ${root_home}/code/mdt24rss_fork/logs/runs/2024-09-30/03-19-04/saved_models/epoch=29_eval_lh/avg_seq_len=1.19.ckpt
+#ckpt_path: ${root_home}/code/mdt24rss_fork/logs/runs/2024-09-30/03-19-04/saved_models/epoch=29_eval_lh/avg_seq_len=1.19.ckpt
+ckpt_path: ${source_pretrain_chk}
 seed: ${seed}
 perceiver_depth: 6
 perceiver_heads: 8
@@ -36,21 +37,45 @@ perceiver_dim_head: 64
 perceiver_num_time_embeds: 1
 perceiver_dim: 384
 num_latents: 3
+use_proprioception: true  # ori: false
+
+debug_tsne: false
+shuffle_target_goal: true
+cfg_drop_ratio: 0.2  # default:0.2
 
 voltron_cache: ${root_home}/pretrained
 
 optimizer:
   _target_: torch.optim.AdamW
-  transformer_weight_decay: 0.05
-  obs_encoder_weight_decay: 0.05
-  learning_rate: 1e-4
-  betas: [0.9, 0.9]
+  transformer_weight_decay: 0.01
+  obs_encoder_weight_decay: 0.01
+  vis1_lr: 1e-6
+  vis2_lr: 1e-6
+  act_lr: 1e-7
+  betas: [0.9,0.99]
 
 lr_scheduler:
-  lr_scheduler:
-    init_lr: 1e-4  # This is the peak or maximum learning rate
-    init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
-    final_lr_scale: 1e-6  # This is the ratio of final learning rate to peak learning rate
-    total_steps: 50000  # Example total steps, adjust as needed
-    phase_ratio: "(0.02, 0.08, 0.9)"
-    lr: 1e-4
+  vis1_lr_scheduler:  # static
+    lr_scheduler:
+      init_lr: 1e-6  # will be recovered
+      init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
+      final_lr_scale: 1e-3  # This is the ratio of final learning rate to peak learning rate
+      total_steps: ${total_steps}  # Example total steps, adjust as needed
+      phase_ratio: "(0.02, 0.15, 0.9)"
+      lr: 1e-6  # This is the peak or maximum learning rate
+  vis2_lr_scheduler:  # gripper
+    lr_scheduler:
+      init_lr: 1e-5  # will be recovered
+      init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
+      final_lr_scale: 1e-3  # This is the ratio of final learning rate to peak learning rate
+      total_steps: ${total_steps}  # Example total steps, adjust as needed
+      phase_ratio: "(0.02, 0.1, 0.9)"
+      lr: 1e-5  # This is the peak or maximum learning rate
+  act_lr_scheduler:
+    lr_scheduler:
+      init_lr: 1e-7  # will be recovered
+      init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
+      final_lr_scale: 1e-3  # This is the ratio of final learning rate to peak learning rate
+      total_steps: ${total_steps}  # Example total steps, adjust as needed
+      phase_ratio: "(0.02, 0.1, 0.9)"
+      lr: 1e-7    # This is the peak or maximum learning rate

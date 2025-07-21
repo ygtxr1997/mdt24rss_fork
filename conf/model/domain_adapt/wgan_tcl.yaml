@@ -1,0 +1,27 @@
+# conf/model/domain_adapt/wgan.yaml
+
+visual_da:
+  _target_: mdt.models.domain_adapt.wgan.WGAN_GP
+  in_dim: "1152*1,"  # trans_enc:1536, res_perceptual:1024, voltron_perceptual:1152, action_emb:10*512
+  in_ndim: "2*1,"  # (B,K,D)=3, (B,D)=2
+  inner_dim: 144  # ori:64
+  use_bn: true  # ori:true
+  gamma: 10
+
+action_da:
+  _target_: mdt.models.domain_adapt.wgan.WGAN_GP
+  in_dim: "384*4,"  # ori:`1536*12`, kv:(1536,2), q/mlp:(512,3), attn:(512,3), softmax:(8,4)
+  in_ndim: "3*4,"  # ori:`2*12`
+  inner_dim: 48  # ori:64
+  use_bn: false  # ori:true
+  gamma: 10  # ori:10
+  num_layers: 4  # v:6 layers, k:6 layers
+  use_ada: true
+  sigma_dim: 384  # ori:512
+  use_cond_dist: false
+
+use_da_visual: 'gripper'  # static,gripper,both,false
+use_da_act: true
+act_loss_from: "mlp"  # ori:`k,v`, choices:`k`,`v`,`q`,`sa`,`ca`,`attn`,`softmax`,`mlp`
+act_layers: 4  # ori:6, choices:6,1,-1
+act_weights: "adapter"  # ori:`ca`, choices:`ca`,`adapter`,`mlp`

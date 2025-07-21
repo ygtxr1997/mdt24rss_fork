@@ -1,0 +1,108 @@
+# conf/da_tcl_hk.yaml
+defaults:
+  - callbacks: tcl
+  - datamodule: tcl_da  # ori:tcl_merge
+  - model: mdtv_da_enc  # ori:mdt_da_enc, choices:edm_dp_da, mdtv_da_enc
+  - override hydra/job_logging: colorlog
+  - override hydra/hydra_logging: colorlog
+
+root_home: /home/geyuan
+source_root_data_dirs:  # For DA
+#  - ${root_home}/local_soft/TCL/collected_data_0507/
+#  - ${root_home}/local_soft/TCL/0627_pot_source/
+  - ${root_home}/local_soft/TCL/0704_pepper_source/
+#  - ${root_home}/local_soft/TCL/0709_coffee_source/
+target_root_data_dirs:  # For DA
+#  - ${root_home}/local_soft/TCL/0627_pot_light/
+#  - ${root_home}/local_soft/TCL/0627_pot_object/
+#  - ${root_home}/local_soft/TCL/0627_pot_table_rand/
+
+  - ${root_home}/local_soft/TCL/0704_pepper_light_rand/
+#  - ${root_home}/local_soft/TCL/0704_pepper_object_rand/
+#  - ${root_home}/local_soft/TCL/0704_pepper_table_rand/
+#  - ${root_home}/local_soft/TCL/0704_pepper_distractor_rand/
+
+#  - ${root_home}/local_soft/TCL/0709_coffee_light_rand/
+#  - ${root_home}/local_soft/TCL/0709_coffee_object_rand/
+#  - ${root_home}/local_soft/TCL/0709_coffee_table_rand/
+#  - ${root_home}/local_soft/TCL/0709_coffee_distractor_rand/
+root_data_dir: ${source_root_data_dir}
+
+lang_folder: lang_clip_resnet50
+vis_clip_model_name: ViT-B/16
+clip_lang_model_name: ViT-B/32
+
+# For DA
+#source_pretrain_chk: "/home/geyuan/code/mdt24rss_fork/logs/runs/2025-07-16/16-24-39/checkpoints/latest.ckpt"  # pot
+source_pretrain_chk: "/home/geyuan/code/mdt24rss_fork/logs/runs/2025-07-16/17-15-42/checkpoints/latest.ckpt"  # pepper
+#source_pretrain_chk: "/home/geyuan/code/mdt24rss_fork/logs/runs/2025-07-16/17-59-55/checkpoints/latest.ckpt"  # coffee
+
+log_dir: ${root_home}/code/mdt24rss_fork/logs
+slurm: false
+min_window_size: 21
+max_window_size: 50
+future_range: 29
+seed: 37  # ori:242
+device: 'cuda'
+batch_size: 128  # ori:128
+devices: 4
+goal_window_size: 1
+act_dim: 7
+obs_dim: 384
+goal_dim: 512
+obs_seq_len: 1
+act_seq_len: 10
+multistep: 10
+p_last_state: 0
+gen_img_res: 112
+max_epochs: 5
+total_steps: 500  # ori:20000, only for controlling the lr scheduler
+rollout_lh_skip_epochs: 99999  # default:3
+window_sampling_strategy: 'geometric'
+num_tokens_voltron: 3
+num_workers: 16
+img_gen_frame_diff: 3
+use_extracted_rel_actions: true  # ori:true
+norm_action_type: "mean"  # ori:minmax
+val_every_n_epochs: 1
+benchmark_name: tcl_hdfree  # ori:calvin_d
+
+
+trainer:
+  gpus: ${devices}
+  precision: bf16  # WGAN,WGAN-GP don't support fp16
+  max_epochs: ${max_epochs}
+  sync_batchnorm: false
+  accelerator: auto
+  limit_train_batches: 100  # ori:300
+  limit_val_batches: 4
+
+logger:
+  _target_: pytorch_lightning.loggers.WandbLogger
+  offline: false
+  save_dir: .
+  name: logger
+  group: mdt
+  log_model: false
+  project: ${benchmark_name} # calvin_vision
+  entity: gavinyuan
+  id: ???
+
+
+hydra:
+  run:
+    dir: ${log_dir}/runs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: ${log_dir}/runs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.override_dirname}
+  job:
+    config:
+      override_dirname:
+        exclude_keys:
+          - log_dir
+          - datamodule.source_root_data_dir
+          - datamodule.target_root_data_dir
+          - trainer.gpus
+          - datamodule.num_workers
+          - trainer.limit_train_batches
+          - trainer.limit_val_batches

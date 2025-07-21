@@ -1,27 +1,21 @@
 defaults:
   - callbacks: tcl  # ori:calvin
-  - datamodule: tcl_merge  # ori:tcl_clear, now:tcl_merge
-  - model: mdtv_agent_tcl  # or use mdt_agent, mdt_agent_tcl
+  - datamodule: tcl_finetune  # ori:tcl_clear,tcl_merge
+  - model: mdtv_agent_tcl_finetune  # or use mdtv_agent_tcl
   - override hydra/job_logging: colorlog
   - override hydra/hydra_logging: colorlog
 
 root_home: /home/geyuan
 root_data_dir:
-  - ${root_home}/local_soft/TCL/collected_data_0507/
-  - ${root_home}/local_soft/TCL/0627_pot_source/
-  - ${root_home}/local_soft/TCL/0704_pepper_source/
-  - ${root_home}/local_soft/TCL/0709_coffee_source/
-## just for debug
-#source_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_ABC_D
-#target_root_data_dir: ${root_home}/code/mdt24rss_fork/dataset/task_D_D
-##
+#  - ${root_home}/local_soft/TCL/collected_data_0507/
+  - ${root_home}/local_soft/TCL/0627_pot_object/
+#  - ${root_home}/local_soft/TCL/0704_pepper_source/
+#  - ${root_home}/local_soft/TCL/0709_coffee_source/
 lang_folder: lang_clip_resnet50
 vis_clip_model_name: ViT-B/16
 clip_lang_model_name: ViT-B/32
 
-#pretrain_chk: "/home/geyuan/code/mdt24rss_fork/logs/runs/2025-07-08/15-56-32/checkpoints/latest.ckpt"
-#pretrain_chk: "/home/geyuan/code/mdt24rss_fork/logs/runs/2025-07-08/15-56-32/calvin_d/2025-07-08_15-56-32/checkpoints/epoch=199-step=41800.ckpt"
-pretrain_chk: "/home/geyuan/code/mdt24rss_fork/logs/runs/2025-07-17/23-13-05/checkpoints/latest.ckpt"
+pretrain_chk: "/home/geyuan/code/mdt24rss_fork/logs/runs/2025-07-16/16-24-39/checkpoints/latest.ckpt"
 #pretrain_chk: "/home/geyuan/code/mdt24rss_fork/logs/runs/2025-07-16/00-57-45/checkpoints/model-e375-loss0.0011.ckpt"
 log_dir: ${root_home}/code/mdt24rss_fork/logs
 slurm: false
@@ -41,14 +35,13 @@ act_seq_len: 10
 multistep: 10
 p_last_state: 0
 gen_img_res: 112
-max_epochs: 800
+max_epochs: 1000  # ori:800
 rollout_lh_skip_epochs: 99999
 window_sampling_strategy: 'geometric'
 num_tokens_voltron: 3
 num_workers: 16
 img_gen_frame_diff: 3
 use_extracted_rel_actions: true
-val_every_n_epochs: 3
 norm_action_type: "mean"  # ori:minmax
 benchmark_name: calvin_d
 

@@ -266,3 +266,159 @@ class HulcDomainAdaptDataModule(pl.LightningDataModule):
         # combined_val_loaders = val_dataloaders['vis']
         combined_val_loaders = CombinedLoader(val_dataloaders, "max_size_cycle")
         return combined_val_loaders
+
+
+class HulcTCLMergeDomainAdaptDataModule(pl.LightningDataModule):
+    """
+    Config: `conf/datamodule/tcl_da.yaml`
+    """
+    def __init__(
+        self,
+        datasets: DictConfig,  # source and target use the same vision-language config
+        source_root_data_dirs: List[str] = ("XXX/task_ABC_D/",),  # Different (1)
+        target_root_data_dirs: List[str] = ("XXX/task_D_D/",),  # Different (2)
+        target_train_ratio: float = 1.,
+        num_workers: int = 8,
+        transforms: DictConfig = DEFAULT_TRANSFORM,
+        shuffle_val: bool = False,
+        dataset_name: str = "CALVIN",
+        train_ratio: float = 1.,
+        val_as_train_ratio: float = 0.,
+        pretrain_chk: str = None,
+        **kwargs: Dict,
+    ):
+        super().__init__()
+        self.datasets_cfg = datasets
+        self.train_datasets = None
+        self.val_datasets = None
+        self.train_sampler = None
+        self.val_sampler = None
+        self.num_workers = num_workers
+
+        self.s_training_dirs = []
+        self.s_training_h5_paths = []
+        self.t_training_dirs = []
+        self.t_training_h5_paths = []
+
+        # Source
+        for root_idx, root_data_dir in enumerate(source_root_data_dirs):
+            root_data_path = Path(root_data_dir)
+            if not root_data_path.is_absolute():
+                root_data_path = Path(mdt.__file__).parent / root_data_path
+
+            tcl_root = os.path.dirname(root_data_path)
+
+            self.s_training_dirs.append(root_data_path)
+            training_basename = os.path.basename(root_data_path)
+            self.s_training_h5_paths.append(os.path.join(tcl_root, "hdf5", training_basename + "_240p.h5"))
+
+        # Target
+        for root_idx, root_data_dir in enumerate(target_root_data_dirs):
+            root_data_path = Path(root_data_dir)
+            if not root_data_path.is_absolute():
+                root_data_path = Path(mdt.__file__).parent / root_data_path
+
+            tcl_root = os.path.dirname(root_data_path)
+
+            self.t_training_dirs.append(root_data_path)
+            training_basename = os.path.basename(root_data_path)
+            self.t_training_h5_paths.append(os.path.join(tcl_root, "hdf5", training_basename + "_240p.h5"))
+
+        self.target_train_ratio = float(target_train_ratio)
+
+        self.shuffle_val = shuffle_val
+        self.modalities: List[str] = []
+        self.transforms = transforms
+        self.train_ratio = train_ratio
+        self.val_as_train_ratio = val_as_train_ratio
+
+        # For finetuning params
+        self.pretrain_chk = pretrain_chk
+        self.pretrain_statistics_path = None
+        if pretrain_chk is not None:
+            self.pretrain_statistics_path = os.path.join(os.path.dirname(pretrain_chk), "statistics.json")
+            print("[Info][HulcTCLMergeDomainAdaptDataModule] Domain Adaptation mode. Loading statistics from source:",
+                  self.pretrain_statistics_path)
+
+    def setup(self, stage=None):
+        """
+        Called by trainer.fit()
+        """
+        self.train_datasets, self.train_sampler, self.val_datasets, self.val_sampler = {}, {}, {}, {}
+
+        for _, dataset in self.datasets_cfg.items():  # keys:'lang_dataset','vision_dataset', not used, only for loop
+            print("[Info][HulcTCLMergeDomainAdaptDataModule] Setup Source dataset:")
+            s_train_dataset = hydra.utils.instantiate(
+                dataset,
+                data_roots=self.s_training_dirs,
+                h5_paths=self.s_training_h5_paths,
+                chose_ratio=1.,
+                statistics_path=self.pretrain_statistics_path,
+                transform_color_jitter=False,
+            )
+            s_val_dataset = s_train_dataset.get_validation_dataset()
+
+            print("[Info][HulcTCLMergeDomainAdaptDataModule] Setup Target dataset:")
+            t_train_dataset = hydra.utils.instantiate(
+                dataset,
+                data_roots=self.t_training_dirs,
+                h5_paths=self.t_training_h5_paths,
+                chose_ratio=1.,
+                statistics_path=self.pretrain_statistics_path,
+                val_ratio=0.02,  # No val dataset
+                transform_color_jitter=False,  # No aug
+            )
+            t_val_dataset = t_train_dataset.get_validation_dataset()
+
+            # Save meta statistics data
+            meta_json_path = os.path.join(Path.cwd(), "checkpoints", "statistics.json")
+            s_train_dataset.save_meta(meta_json_path)
+
+            key = dataset.key  # "lang", "vis"
+            self.train_datasets[f"{key}_source"] = s_train_dataset
+            self.train_datasets[f"{key}_target"] = t_train_dataset
+            self.val_datasets[f"{key}_source"] = s_val_dataset
+            self.val_datasets[f"{key}_target"] = t_val_dataset  # DEBUG: find best da params
+            self.modalities.append(key)  # "lang", "vis"
+            logger.info(f'HulcTCLMergeDomainAdaptDataModule: train_{key}_s_len={len(s_train_dataset)}, '
+                        f'train_{key}_t_len={len(t_train_dataset)}, chose_ratio={self.target_train_ratio * 100:.3f}%')
+            print(f"[DEBUG] {_} source and target finished.")
+
+    def train_dataloader(self):
+        return CombinedLoader({
+            key: DataLoader(
+                dataset,
+                batch_size=dataset.batch_size,
+                num_workers=dataset.num_workers,
+                pin_memory=True,
+                shuffle=True,
+                drop_last=True,
+            )
+            for key, dataset in self.train_datasets.items()
+        }, "max_size_cycle")
+
+    def test_dataloader(self):  # just for debug
+        return CombinedLoader({
+            key: DataLoader(
+                dataset,
+                batch_size=dataset.batch_size,
+                num_workers=dataset.num_workers,
+                pin_memory=True,
+                shuffle=False,
+            )
+            for key, dataset in self.train_datasets.items()
+        }, "max_size_cycle")
+
+    def val_dataloader(self):
+        val_dataloaders = {
+            key: DataLoader(
+                dataset,
+                batch_size=12,  # dataset.batch_size,
+                num_workers=dataset.num_workers,
+                pin_memory=True,
+                drop_last=True,
+            )
+            for key, dataset in self.val_datasets.items()
+        }
+        combined_val_loaders = CombinedLoader(val_dataloaders, "max_size_cycle")
+        return combined_val_loaders
