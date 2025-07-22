@@ -104,3 +104,25 @@ class VoltronTokenEncoder(nn.Module):
             else:
                 x = self.vcond(x, mode='visual')
         return x
+
+    def freeze(self):
+        for param in self.vcond.parameters():
+            param.requires_grad = False
+
+    def freeze_backbone(self):
+        self.freeze()
+
+        # 2) 解冻 Encoder 最后一个 Block 中 MLP 的最后一层 Linear
+        last_mlp_linear = self.vcond.encoder_blocks[-1].mlp[-1]
+        for param in last_mlp_linear.parameters():
+            param.requires_grad = True
+
+        trainable = self.count_trainable_params()
+        print(f"[DEBUG][VoltronTokenEncoder] trainable={trainable / 1e3:.2f}K")
+
+    def trainable_params(self):
+        return filter(lambda p: p.requires_grad, self.parameters())
+
+    def count_trainable_params(self) -> int:
+        """统计可训练参数的总数"""
+        return sum(p.numel() for p in self.trainable_params())

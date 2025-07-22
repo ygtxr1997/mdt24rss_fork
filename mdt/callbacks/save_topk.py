@@ -352,7 +352,7 @@ class ManuallySaveModelCallback(Callback):
 
     def _should_save_on_epoch(self, trainer: Trainer) -> bool:
         """Check if we should save checkpoint on this epoch."""
-        return trainer.current_epoch % self.every_n_epochs == 0
+        return trainer.current_epoch % self.every_n_epochs == 0 and trainer.current_epoch > 0
 
     @rank_zero_only
     def on_validation_epoch_end(self, trainer: Trainer, pl_module: LightningModule):

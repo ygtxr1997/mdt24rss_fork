@@ -42,6 +42,8 @@ use_proprioception: true  # ori: false
 debug_tsne: false
 shuffle_target_goal: true
 cfg_drop_ratio: 0.2  # default:0.2
+n_critic: 10  # default: 1
+vis2_d_lr_scale: 10  # default: 1
 
 voltron_cache: ${root_home}/pretrained
 
