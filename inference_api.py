@@ -27,8 +27,8 @@ $ CUDA_VISIBLE_DEVICES=9 uvicorn inference_api:app --port 6060
 app = FastAPI()
 max_cache_action = 7  # will be sent to the evaluator through network
 
-log_time = "2025-07-21/11-20-27"
-w_idx = 2
+log_time = "2025-07-16/16-24-39"  # pot source
+w_idx = -1
 dataset_name = "pepper"  # shovel; pot, pot_light; pepper; coffee
 
 
