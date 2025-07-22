@@ -895,6 +895,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             # For Domain Adaptation
             shuffle_target_goal: bool = True,
             cfg_drop_ratio: float = 0.,
+            n_critic: int = 5,
+            vis2_d_lr_scale: float = 1.,
             # real exp added
             use_proprioception: bool = False,
     ):
@@ -993,6 +995,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.cache_da_g_loss = 0.
         self.shuffle_target_goal = shuffle_target_goal
         self.cfg_drop_ratio = cfg_drop_ratio
+        self.n_critic = n_critic
+        self.vis2_d_lr_scale = vis2_d_lr_scale
         # self.reg_source_diff_loss = reg_source_diff_loss
         # self.use_dann_lambda = use_dann_lambda
         # For visualization
@@ -1058,6 +1062,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         # self.set_requires_grad(self.source_img_encoder, False)
         self.set_requires_grad(self.source_model, False)
         self.set_requires_grad(self.img_encoder, False)  # Freeze voltron encoder
+        # self.set_requires_grad(self.perceiver, False)  # Freeze perciever
 
         self.set_requires_grad(self.visual_goal, False)
         self.set_requires_grad(self.language_goal, False)
@@ -1070,6 +1075,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         if self.use_da_vis1 or self.use_da_vis2:  # `static` and `gripper` shares the same perceiver
             self.set_requires_grad(self.perceiver, True)
             self.perceiver.freeze_backbone_except_first_to_qkv()
+            # self.img_encoder.freeze_backbone()
+            # self.source_perceiver.save_first_qkv = True  # for adversarial training
             if self.use_da_vis1:
                 g_vis1_optim_groups.extend([
                     {"params": self.perceiver.trainable_params(), "lr": self.optimizer_config.vis1_lr},
@@ -1170,13 +1177,17 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 "frequency": 1,
             }
 
-            g_vis2_scheduler = TriStageLRScheduler(g_vis2_optimizer, vis2_lr_configs)
+            g_vis2_lr_configs = copy.deepcopy(vis2_lr_configs)
+            # g_vis2_lr_configs.lr_scheduler.lr *= 0.
+            g_vis2_scheduler = TriStageLRScheduler(g_vis2_optimizer, g_vis2_lr_configs)
             g_vis2_lr_scheduler = {
                 "scheduler": g_vis2_scheduler,
                 "interval": 'step',
                 "frequency": 1,
             }
-            d_vis2_scheduler = TriStageLRScheduler(d_vis2_optimizer, vis2_lr_configs)
+            d_vis2_lr_configs = copy.deepcopy(vis2_lr_configs)
+            d_vis2_lr_configs.lr_scheduler.lr *= self.vis2_d_lr_scale
+            d_vis2_scheduler = TriStageLRScheduler(d_vis2_optimizer, d_vis2_lr_configs)
             d_vis2_lr_scheduler = {
                 "scheduler": d_vis2_scheduler,
                 "interval": 'step',
@@ -1221,45 +1232,76 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
 
     def calc_grad_and_param_norm(self, module: Union[nn.Module, List[nn.Module]],
                                  sqrt_out: bool = True,
-                                 ):
+                                 only_trainable: bool = True) -> Tuple[float, float, float]:
+        """
+        计算模块的梯度范数和参数范数
+
+        Args:
+            module: 单个模块或模块列表
+            sqrt_out: 是否对结果开方
+            only_trainable: 是否只统计可训练参数
+
+        Returns:
+            (grad_norm, param_norm, ratio_norm)
+        """
         total_grad_norm = 0.0
         total_param_norm = 0.0
         total_ratio_norm = 0.0
+
         if isinstance(module, list):
             for m in module:
-                m_grad, m_param, m_ratio = self.calc_grad_and_param_norm(m, sqrt_out=False)  # recursive
+                m_grad, m_param, m_ratio = self.calc_grad_and_param_norm(
+                    m, sqrt_out=False, only_trainable=only_trainable)  # 递归时不开方
                 total_grad_norm += m_grad
                 total_param_norm += m_param
                 total_ratio_norm += m_ratio
         else:
             assert isinstance(module, nn.Module)
             for name, p in module.named_parameters():
+                # 只统计需要梯度的参数
+                if only_trainable and not p.requires_grad:
+                    continue
+
+                param_norm = p.norm().item()
+                total_param_norm += param_norm ** 2
+
                 if p.grad is not None:
-                    total_grad_norm += p.grad.norm().item() ** 2
-                    total_ratio_norm += (p.grad.norm().item() / (1e-8 + p.data.norm().item())) ** 2
-                total_param_norm += p.norm().item() ** 2
+                    grad_norm = p.grad.norm().item()
+                    total_grad_norm += grad_norm ** 2
+                    total_ratio_norm += (grad_norm / (1e-8 + param_norm)) ** 2
+
         if sqrt_out:
             total_grad_norm = total_grad_norm ** 0.5
             total_param_norm = total_param_norm ** 0.5
             total_ratio_norm = total_ratio_norm ** 0.5
+
         return total_grad_norm, total_param_norm, total_ratio_norm
 
     def on_before_zero_grad(self, optimizer=None):
-        vis1_grad_norm, vis1_total_norm, _ = self.calc_grad_and_param_norm(self.perceiver)
+        vis1_grad_norm, vis1_total_norm, _ = self.calc_grad_and_param_norm(self.img_encoder)
         vis2_grad_norm, vis2_total_norm, _ = self.calc_grad_and_param_norm(self.perceiver)
         act_grad_norm, act_total_norm, _ = self.calc_grad_and_param_norm(self.model)
 
-        self.log("train/vis1_grad_norm", vis1_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
-        self.log("train/vis1_total_norm", vis1_total_norm, on_step=True, on_epoch=False, sync_dist=True)
-        self.log("train/vis2_grad_norm", vis2_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
-        self.log("train/vis2_total_norm", vis2_total_norm, on_step=True, on_epoch=False, sync_dist=True)
-        self.log("train/act_grad_norm", act_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
-        self.log("train/act_total_norm", act_total_norm, on_step=True, on_epoch=False, sync_dist=True)
+        d_vis2_grad_norm, d_vis2_total_norm, _ = self.calc_grad_and_param_norm(self.da_vis2_loss)
+        if self.use_da_act:
+            d_act_grad_norm, d_act_total_norm, _ = self.calc_grad_and_param_norm(self.da_act_loss)
+        else:
+            d_act_grad_norm, d_act_total_norm, _ = 0, 0, 0
+
+        self.log("grad/vis1_grad_norm", vis1_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+        # self.log("grad/vis1_total_norm", vis1_total_norm, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("grad/vis2_grad_norm", vis2_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+        # self.log("grad/vis2_total_norm", vis2_total_norm, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("grad/act_grad_norm", act_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+        # self.log("grad/act_total_norm", act_total_norm, on_step=True, on_epoch=False, sync_dist=True)
+
+        self.log("grad/d_vis2_grad_norm", d_vis2_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("grad/d_act_grad_norm", d_act_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
 
         total_grad_norm = vis1_grad_norm + vis2_grad_norm + act_grad_norm
         total_param_norm = vis1_total_norm + vis2_total_norm + act_total_norm
-        self.log("train/grad_norm", total_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
-        self.log("train/param_norm", total_param_norm, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("grad/grad_norm", total_grad_norm, on_step=True, on_epoch=False, sync_dist=True)
+        # self.log("grad/param_norm", total_param_norm, on_step=True, on_epoch=False, sync_dist=True)
 
     def shuffle_tensor(self, x: torch.Tensor, dim: int = 0):
         if self.shuffle_target_goal:
@@ -1432,8 +1474,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 mlp_out = self.source_model.inner_model.cache_mlp_output  # (B,10,512)*6
 
                 save_key = self.modality_scope[:-len('_source')]
-                s_latent_static_emb_dict[save_key] = s_perceptual_emb['state_images'].reshape(cur_bs, -1)  # MDT-V has no `static` \
-                s_latent_gripper_emb_dict[save_key] = s_perceptual_emb['state_images'].reshape(cur_bs, -1)  # or `gripper`. (bs,3,384)
+                s_latent_static_emb_dict[save_key] = s_perceptual_emb['vis_feats_for_da']  # MDT-V has no `static` \
+                s_latent_gripper_emb_dict[save_key] = s_perceptual_emb['vis_feats_for_da']  # or `gripper`.(bs,395,1024)
                 s_latent_encoder_emb_dict[save_key] = latent_encoder_emb
                 s_latent_action_emb_dict[save_key] = latent_action_emb
                 s_pred_a0_dict[save_key] = action_output
@@ -1480,8 +1522,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 mlp_out = self.model.inner_model.cache_mlp_output  # (B,10,512)*6
 
                 save_key = self.modality_scope[:-len('_target')]
-                t_latent_static_emb_dict[save_key] = t_perceptual_emb['state_images'].reshape(cur_bs, -1)  # (bs,1,512)
-                t_latent_gripper_emb_dict[save_key] = t_perceptual_emb['state_images'].reshape(cur_bs, -1)
+                t_latent_static_emb_dict[save_key] = t_perceptual_emb['vis_feats_for_da']  # (bs,395,1024)
+                t_latent_gripper_emb_dict[save_key] = t_perceptual_emb['vis_feats_for_da']
                 t_latent_encoder_emb_dict[save_key] = latent_encoder_emb
                 t_latent_action_emb_dict[save_key] = latent_action_emb  # (bs,10,512)
                 t_pred_a0_dict[save_key] = action_output
@@ -1788,6 +1830,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
 
         ''' 2. Update generator '''
         dann_lambda = 1.
+        n_critic = self.n_critic
 
         losses['cont_loss'] += cont_loss / t_batch_len  # used
         losses['action_loss'] += action_loss / batch_len  # NOT used
@@ -1810,8 +1853,9 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             g_act_opt.zero_grad()
             retain_graph = self.use_da_vis1 or self.use_da_vis2  # Keep backward graph for later modules
             act_back_loss = losses['da_g_act_loss'] * dann_lambda + losses['action_loss']
-            self.manual_backward(act_back_loss, retain_graph=retain_graph)
-            g_act_opt.step()
+            if batch_idx % n_critic == 0:
+                self.manual_backward(act_back_loss, retain_graph=retain_graph)
+                g_act_opt.step()
             g_act_sch.step()
 
         if self.use_da_vis1:
@@ -1841,13 +1885,15 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             g_vis2_opt.zero_grad()
 
         losses['total_loss'] += backward_loss + losses['da_g_act_loss']
-        if self.use_da_vis1 or self.use_da_vis2:
-            self.manual_backward(backward_loss)  # backward vis1 and vis2 together
 
-        if self.use_da_vis1:
-            g_vis1_opt.step()
-        if self.use_da_vis2:
-            g_vis2_opt.step()
+        if batch_idx % n_critic == 0:
+            if self.use_da_vis1 or self.use_da_vis2:
+                self.manual_backward(backward_loss)  # backward vis1 and vis2 together
+
+            if self.use_da_vis1:
+                g_vis1_opt.step()
+            if self.use_da_vis2:
+                g_vis2_opt.step()
         g_vis1_sch.step()
         g_vis2_sch.step()
 
@@ -1910,9 +1956,10 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 inference=True,
             )
             # compute the mse action loss
+            loss_scale = 1. if "target" not in self.modality_scope else 0.01
             pred_loss = torch.nn.functional.mse_loss(action_pred, dataset_batch["actions"])
             latent_encoder_emb = self.model.inner_model.latent_encoder_emb
-            val_total_act_loss_pp += pred_loss
+            val_total_act_loss_pp += pred_loss * loss_scale
 
             # next compute the image generation loss
             if not isinstance(self.gen_img, NoEncoder):
@@ -1981,19 +2028,38 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
     def compute_voltron_embeddings(self, rgb_static, rgb_gripper, is_target=True):
         """
         Compute the visual embeddings using the Voltron model.
+        Called by forward, training_step, validation_step
         """
         rgb_static = einops.rearrange(rgb_static, 'b t c h w -> (b t) c h w')
         rgb_gripper = einops.rearrange(rgb_gripper, 'b t c h w -> (b t) c h w')
         img_encoder = self.img_encoder  # same encoder for `source` and `target`
         if is_target:
+            # img_encoder = self.img_encoder
             perceiver = self.perceiver
         else:
+            # img_encoder = self.source_img_encoder
             perceiver = self.source_perceiver
+        # perceiver = self.source_perceiver
         static_tokens = img_encoder(rgb_static)
-        gripper_tokens = img_encoder(rgb_gripper)
+        gripper_tokens = img_encoder(rgb_gripper)  # (B,14*14,384)
+        # print(static_tokens.shape, rgb_static.shape)
+
+        # vis_feats_for_da = torch.cat([static_tokens, gripper_tokens], dim=-1)  # (B,14*14,768)
+        # vis_feats_for_da = einops.rearrange(vis_feats_for_da, 'b (h w) c -> b c h w', h=14)
 
         token_seq = torch.cat([static_tokens, gripper_tokens], dim=1).unsqueeze(1)
-        perceptual_emb = {'state_images': perceiver(token_seq)}
+        perceptual_emb = {'state_images': perceiver(token_seq)}  # (B,3,384)
+
+        if perceiver.save_first_qkv:
+            # vis_feats_for_da = torch.cat([perceiver.first_qkv['k'],
+            #                               perceiver.first_qkv['v']], dim=-1)  # (B,395,1024)
+            pass
+
+        vis_feats_for_da =  perceptual_emb['state_images']
+        vis_feats_for_da = vis_feats_for_da.reshape(vis_feats_for_da.shape[0], -1)  # (B,3,384) -> (B,1152)
+
+        perceptual_emb['vis_feats_for_da'] = vis_feats_for_da
+
         return perceptual_emb
 
     def clip_extra_forward(self, perceptual_emb, latent_goal, actions, sigmas, noise):
@@ -2081,7 +2147,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         Log the training metrics.
         """
         for k, v in log_dict.items():
-            self.log(f"train/{k}", v.clone().detach(),
+            self.log(f"train_loss/{k}", v.clone().detach(),
                      on_step=True, on_epoch=False, sync_dist=True, batch_size=total_bs)
 
     def _log_validation_metrics(self, pred_loss, img_gen_loss, val_total_act_loss_pp):

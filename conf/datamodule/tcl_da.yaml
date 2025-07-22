@@ -16,6 +16,7 @@ shuffle_val: false
 
 # Domain Adaptation uses the Source model as the Pretrained model
 pretrain_chk: ${source_pretrain_chk}
+target_color_jitter: false  # ori:false
 
 
 observation_space:

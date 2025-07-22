@@ -11,8 +11,13 @@ from .utils import feed_forward_layer
 class PerceiverAttentionLayer(nn.Module):
     """Perceiver Attention Layer"""
 
-    def __init__(self, dim: int, dim_head: int = 64, heads: int = 8):
+    def __init__(self, dim: int, dim_head: int = 64, heads: int = 8, save_qkv=False):
         super().__init__()
+        # 是否保存本层的 qkv
+        self.save_qkv = False
+        # 用来存储 q, k, v 的 dict
+        self.qkv = {'q': None, 'k': None, 'v': None}
+
         self.scale = dim_head**-0.5
         self.heads = heads
         self.dim_head = dim_head
@@ -31,8 +36,8 @@ class PerceiverAttentionLayer(nn.Module):
         """Latent vectors are cross-attending to the visual features x
 
         Args:
-            features: Batch of visual features with shape (batch_size, n_features, dim)
-            latents: Latent learnt vectors which are used to compute queries with shape (batch_size, n_latents, dim)
+            features: x_f, Batch of visual features with shape (batch_size, n_features, dim)
+            latents: x, Latent learnt vectors which are used to compute queries with shape (batch_size, n_latents, dim)
 
         Returns:
             Attention score with shape (batch_size, n_latents, dim)
@@ -52,6 +57,8 @@ class PerceiverAttentionLayer(nn.Module):
 
         # Compute the queries from the latents, for all attention heads simultaneously
         q = self.to_q(latents)
+        if self.save_qkv:
+            self.qkv['q'] = q.clone()
         q = rearrange(q, 'b q (h d) -> b h q d', h=n_heads)
         assert q.shape == torch.Size([n_batch, n_heads, n_queries, self.dim_head])
 
@@ -60,6 +67,9 @@ class PerceiverAttentionLayer(nn.Module):
         n_features_latents = n_features + n_queries
         k = self.to_k(kv_input)
         v = self.to_v(kv_input)
+        if self.save_qkv:
+            self.qkv['k'] = k.clone()
+            self.qkv['v'] = v.clone()
 
         k, v = rearrange_many((k, v), 'b f (h d) -> b h f d', h=n_heads)
         assert v.shape == torch.Size([n_batch, n_heads, n_features_latents, self.dim_head])
@@ -96,6 +106,9 @@ class PerceiverResampler(nn.Module):
 
         self.dim = dim
         self.num_queries = num_latents
+
+        self.save_first_qkv = False
+        self.first_qkv: dict = {'q': None, 'k': None, 'v': None}
 
         self.latents = nn.Parameter(torch.randn(num_latents, dim))  # type: ignore[reportPrivateUsage]
         self.time_pos_emb = nn.Parameter(torch.randn(num_time_embeds, 1, dim))  # type: ignore[reportPrivateUsage]
@@ -135,6 +148,7 @@ class PerceiverResampler(nn.Module):
                     param.requires_grad = True
 
     def freeze_backbone_except_first_to_qkv(self):
+        self.save_first_qkv = True  # use first qkv output for adversarial training
         # Freeze all layers except for the first PerceiverAttentionLayer's to_q, to_k, to_v
         for i, (attn, ffw) in enumerate(self.layers):
             if i == 0:
@@ -156,6 +170,7 @@ class PerceiverResampler(nn.Module):
                     param.requires_grad = False
                 for param in ffw.parameters():
                     param.requires_grad = False
+        print(f"[Debug][PerceiverResampler] Freeze backbone first to_qkv layers. save_first_qkv = {self.save_first_qkv}")
 
     def trainable_params(self):
         return filter(lambda p: p.requires_grad, self.parameters())
@@ -187,10 +202,14 @@ class PerceiverResampler(nn.Module):
         x_f = x_f + time_pos_emb
 
         # Flatten the frames
-        x_f = rearrange(x_f, 'b T n d -> b (T n) d')
+        x_f = rearrange(x_f, 'b T n d -> b (T n) d')  # (B,392,384)
 
         # Copy the latents for every element in the batch
         x = repeat(self.latents, 'q d -> b q d', b=batch_size)
+
+        if self.save_first_qkv:
+            first_attn = self.layers[0][0]
+            first_attn.save_qkv = True
 
         # Apply attention and feed forward layer
         for attn, ffw in self.layers:
@@ -198,6 +217,13 @@ class PerceiverResampler(nn.Module):
             x = x + ffw(x)
 
         assert x.shape == torch.Size([batch_size, self.num_queries, self.dim])
+
+        if self.save_first_qkv:
+            first_attn = self.layers[0][0]
+            self.first_qkv['q'] = first_attn.qkv['q']  # (B,3,512) from x
+            self.first_qkv['k'] = first_attn.qkv['k']  # (B,395,512) from x and x_f
+            self.first_qkv['v'] = first_attn.qkv['v']  # (B,395,512) from x and x_f
+            first_attn.save_qkv = False  # reset
 
         norm = self.norm(x)
         return norm

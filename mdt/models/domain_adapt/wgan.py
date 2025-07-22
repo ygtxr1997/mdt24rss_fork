@@ -150,11 +150,11 @@ class AdaLNZero(nn.Module):
 
 class Discriminator1d(torch.nn.Module):
     def __init__(self, in_dim: int, inner_dim=64, dropout=0.2, use_ada=False, use_cond_dist=False,
-                 ndim: int = 2, time_dim: int = 10, use_bn: bool = True, **kwargs,
+                 ndim: int = 2, time_dim: int = 1, use_bn: bool = True, **kwargs,
                  ):
         super(Discriminator1d, self).__init__()
         down_scale = min(4, in_dim // 64)
-        stem_in_dim = 1 if ndim == 2 else time_dim  # (B,1,D) or (B,T,D)
+        stem_in_dim = time_dim  # (B,1,D) or (B,T,D)
         self.stem = nn.Sequential(
             nn.Conv1d(stem_in_dim, inner_dim, 4, down_scale, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
@@ -200,15 +200,29 @@ class Discriminator1d(torch.nn.Module):
 
         self.init_weight()
 
+        self.debug = False
+
     def forward(self, x, sigmas=None):  # x:(B,D), s:(B,512)
         if x.ndim == 2:  # (B,D)
-            x = x.unsqueeze(1)  # (B,1,D)
+            x = x.unsqueeze(1)  # (B,1,D), using 1 as time_dim
         elif x.ndim == 3:  # (B,T,D)
             if sigmas is not None:
                 sigmas = einops.repeat(sigmas, "b d -> (b t) d", t=x.shape[1])  # (B*T,D)
-            x = x.reshape(-1, x.shape[-1])  # remove time dimension, (B*T,D)
-            x = x.unsqueeze(1)  # (B*T,1,D)
+            # x = x.reshape(-1, x.shape[-1])  # remove time dimension, (B*T,D)
+            # x = x.unsqueeze(1)  # (B*T,1,D)
+            x = x.mean(dim=1)
+            x = x.unsqueeze(1)
+        elif x.ndim == 4:  # (B,C,H,W)
+            x = F.adaptive_avg_pool2d(x, (1, 1))  # (B,C,1,1)
+            x = x.reshape(x.size(0), -1)  # (B,C*1*1)
+            # x = x.squeeze(-1).squeeze(-1)
+            x = x.unsqueeze(1)
+        if self.debug:
+            print("in_x:", x.shape)
         x = self.stem(x)
+
+        if self.debug:
+            print("stem out:", x.shape)
 
         for i in range(len(self.convs)):
             x = self.norms[i](x)
@@ -218,6 +232,8 @@ class Discriminator1d(torch.nn.Module):
                 c_gate = c_gate.unsqueeze(-1)
                 x = (1 - c_gate) * x + c_gate * (c_shift.unsqueeze(-1) + x * (c_scale.unsqueeze(-1) + 1.))
             x = self.convs[i](x)
+            if self.debug:
+                print(f"{i}-th conv out:", x.shape)
 
         x = x.reshape(x.size(0), -1)
         output = self.logit_out(self.dropout(x))
@@ -665,9 +681,14 @@ class WGAN_GP(torch.nn.Module):
         # interpolates = torch.stack([interpolates, h_s, h_t]).requires_grad_()
 
         preds = critic(interpolates, sigmas)
+
         gradients = grad(preds, interpolates,
                          grad_outputs=torch.ones_like(preds),
                          retain_graph=True, create_graph=True)[0]
-        gradient_norm = gradients.norm(2, dim=1)
+        # gradient_norm = gradients.norm(2, dim=1)
+        # 关键修改：将所有维度展平，只保留batch维度
+        gradients = gradients.view(gradients.size(0), -1)  # (B, *)
+        gradient_norm = gradients.norm(2, dim=1)  # 现在dim=1是正确的
+
         gradient_penalty = ((gradient_norm - 1) ** 2).mean()
         return gradient_penalty

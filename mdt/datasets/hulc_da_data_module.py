@@ -285,6 +285,7 @@ class HulcTCLMergeDomainAdaptDataModule(pl.LightningDataModule):
         train_ratio: float = 1.,
         val_as_train_ratio: float = 0.,
         pretrain_chk: str = None,
+        target_color_jitter: bool = False,
         **kwargs: Dict,
     ):
         super().__init__()
@@ -331,6 +332,7 @@ class HulcTCLMergeDomainAdaptDataModule(pl.LightningDataModule):
         self.transforms = transforms
         self.train_ratio = train_ratio
         self.val_as_train_ratio = val_as_train_ratio
+        self.target_color_jitter = target_color_jitter
 
         # For finetuning params
         self.pretrain_chk = pretrain_chk
@@ -366,7 +368,7 @@ class HulcTCLMergeDomainAdaptDataModule(pl.LightningDataModule):
                 chose_ratio=1.,
                 statistics_path=self.pretrain_statistics_path,
                 val_ratio=0.02,  # No val dataset
-                transform_color_jitter=False,  # No aug
+                transform_color_jitter=self.target_color_jitter,  # No aug
             )
             t_val_dataset = t_train_dataset.get_validation_dataset()
 
