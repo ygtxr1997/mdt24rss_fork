@@ -27,8 +27,8 @@ $ CUDA_VISIBLE_DEVICES=9 uvicorn inference_api:app --port 6060
 app = FastAPI()
 max_cache_action = 7  # will be sent to the evaluator through network
 
-log_time = "2025-07-22/16-10-06"
-w_idx = -1
+log_time = "2025-07-23/12-21-41"
+w_idx = 0
 dataset_name = "pepper"  # shovel; pot, pot_light; pepper; coffee
 
 
@@ -80,7 +80,7 @@ def load_model_from_safetensor(
 
     model = hydra.utils.instantiate(load_cfg)
     weights = torch.load(ckpt_path, map_location="cpu")
-    model.load_state_dict(weights['state_dict'], strict=True)
+    model.load_state_dict(weights['state_dict'], strict=False)
 
     # 3. Meta data statistics
     ## Try to load statistics.json from original dataset dir

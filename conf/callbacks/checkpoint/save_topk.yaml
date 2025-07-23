@@ -3,6 +3,7 @@ dirpath: checkpoints/
 monitor: "val_act/action_loss"
 save_top_k: 3
 mode: "min"
+skip_epochs: 0
 save_last: True
 verbose: True
 filename: "model-e{epoch:02d}-loss{val_act/action_loss:.4f}"

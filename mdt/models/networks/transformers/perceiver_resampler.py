@@ -147,14 +147,15 @@ class PerceiverResampler(nn.Module):
                 for param in ffw.parameters():
                     param.requires_grad = True
 
-    def freeze_backbone_except_first_to_qkv(self):
+    def freeze_backbone_except_first_to_qkv(self, num_layers: int = 1):
+        """ num_layers: 99 means all layers """
         self.save_first_qkv = True  # use first qkv output for adversarial training
         # Freeze all layers except for the first PerceiverAttentionLayer's to_q, to_k, to_v
         for i, (attn, ffw) in enumerate(self.layers):
-            if i == 0:
+            if i < num_layers and num_layers >= 0:
                 # Unfreeze the to_q, to_k, and to_v of the first PerceiverAttentionLayer
                 for param in attn.to_q.parameters():
-                    param.requires_grad = True
+                    param.requires_grad = False
                 for param in attn.to_k.parameters():
                     param.requires_grad = True
                 for param in attn.to_v.parameters():

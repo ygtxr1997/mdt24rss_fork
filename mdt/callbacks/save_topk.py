@@ -36,6 +36,7 @@ class ManuallySaveModelCallback(Callback):
             save_last: bool = True,
             save_top_k: int = 1,
             mode: str = "min",
+            skip_epochs: int = 0,
             auto_insert_metric_name: bool = True,
             every_n_epochs: int = 1,
             save_weights_only: bool = False,
@@ -64,6 +65,7 @@ class ManuallySaveModelCallback(Callback):
         self.save_last = save_last
         self.save_top_k = save_top_k
         self.mode = mode
+        self.skip_epochs = skip_epochs
         self.auto_insert_metric_name = auto_insert_metric_name
         self.every_n_epochs = every_n_epochs
         self.save_weights_only = save_weights_only
@@ -352,7 +354,8 @@ class ManuallySaveModelCallback(Callback):
 
     def _should_save_on_epoch(self, trainer: Trainer) -> bool:
         """Check if we should save checkpoint on this epoch."""
-        return trainer.current_epoch % self.every_n_epochs == 0 and trainer.current_epoch > 0
+        return ((trainer.current_epoch - self.skip_epochs) % self.every_n_epochs == 0
+                and trainer.current_epoch >= self.skip_epochs)
 
     @rank_zero_only
     def on_validation_epoch_end(self, trainer: Trainer, pl_module: LightningModule):

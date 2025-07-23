@@ -42,8 +42,9 @@ use_proprioception: true  # ori: false
 debug_tsne: false
 shuffle_target_goal: true
 cfg_drop_ratio: 0.2  # default:0.2
-n_critic: 10  # default: 1
-vis2_d_lr_scale: 10  # default: 1
+n_early_d_steps: 100  # default:0
+n_critic: 5  # default: 1
+vis2_d_lr_scale: 8  # default: 1
 
 voltron_cache: ${root_home}/pretrained
 
@@ -54,7 +55,7 @@ optimizer:
   vis1_lr: 1e-6
   vis2_lr: 1e-6
   act_lr: 1e-7
-  betas: [0.9,0.99]
+  betas: [0.5, 0.999]  # ori:[0.9,0.99]
 
 lr_scheduler:
   vis1_lr_scheduler:  # static
@@ -75,9 +76,9 @@ lr_scheduler:
       lr: 1e-5  # This is the peak or maximum learning rate
   act_lr_scheduler:
     lr_scheduler:
-      init_lr: 1e-7  # will be recovered
+      init_lr: 1e-6  # will be recovered
       init_lr_scale: 0.1  # This is the ratio of initial learning rate to peak learning rate
       final_lr_scale: 1e-3  # This is the ratio of final learning rate to peak learning rate
       total_steps: ${total_steps}  # Example total steps, adjust as needed
       phase_ratio: "(0.02, 0.1, 0.9)"
-      lr: 1e-7    # This is the peak or maximum learning rate
+      lr: 1e-6    # This is the peak or maximum learning rate

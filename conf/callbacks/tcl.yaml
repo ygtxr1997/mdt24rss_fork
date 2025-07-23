@@ -1,3 +1,9 @@
 # conf/callbacks/tcl.yaml
 defaults:
   - checkpoint: save_topk  # ori:save_topk, choices:`save_model`
+
+# 覆盖特定参数
+checkpoint:
+  save_top_k: 2  # 从3改为2
+  every_n_epochs: 5
+  skip_epochs: 4

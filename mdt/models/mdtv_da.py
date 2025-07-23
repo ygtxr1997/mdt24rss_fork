@@ -896,6 +896,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             shuffle_target_goal: bool = True,
             cfg_drop_ratio: float = 0.,
             n_critic: int = 5,
+            n_early_d_steps: int = 0,
+            grad_clip: float = None,
             vis2_d_lr_scale: float = 1.,
             # real exp added
             use_proprioception: bool = False,
@@ -996,6 +998,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.shuffle_target_goal = shuffle_target_goal
         self.cfg_drop_ratio = cfg_drop_ratio
         self.n_critic = n_critic
+        self.n_early_d_steps = n_early_d_steps
+        self.grad_clip = grad_clip
         self.vis2_d_lr_scale = vis2_d_lr_scale
         # self.reg_source_diff_loss = reg_source_diff_loss
         # self.use_dann_lambda = use_dann_lambda
@@ -1074,7 +1078,7 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
         self.set_requires_grad(self.perceiver, False)
         if self.use_da_vis1 or self.use_da_vis2:  # `static` and `gripper` shares the same perceiver
             self.set_requires_grad(self.perceiver, True)
-            self.perceiver.freeze_backbone_except_first_to_qkv()
+            self.perceiver.freeze_backbone_except_first_to_qkv(num_layers=99)
             # self.img_encoder.freeze_backbone()
             # self.source_perceiver.save_first_qkv = True  # for adversarial training
             if self.use_da_vis1:
@@ -1200,6 +1204,8 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
                 "interval": 'step',
                 "frequency": 1,
             }
+            d_act_lr_configs = copy.deepcopy(act_lr_configs)
+            d_act_lr_configs.lr_scheduler.lr *= self.vis2_d_lr_scale
             d_act_scheduler = TriStageLRScheduler(d_act_optimizer, act_lr_configs)
             d_act_lr_scheduler = {
                 "scheduler": d_act_scheduler,
@@ -1853,8 +1859,10 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
             g_act_opt.zero_grad()
             retain_graph = self.use_da_vis1 or self.use_da_vis2  # Keep backward graph for later modules
             act_back_loss = losses['da_g_act_loss'] * dann_lambda + losses['action_loss']
+            self.manual_backward(act_back_loss, retain_graph=retain_graph)
+            if self.grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(self.model.inner_model.parameters(), self.grad_clip)
             if batch_idx % n_critic == 0:
-                self.manual_backward(act_back_loss, retain_graph=retain_graph)
                 g_act_opt.step()
             g_act_sch.step()
 
@@ -1886,10 +1894,11 @@ class MDTVDomainAdaptVisualEncoder(pl.LightningModule):
 
         losses['total_loss'] += backward_loss + losses['da_g_act_loss']
 
-        if batch_idx % n_critic == 0:
-            if self.use_da_vis1 or self.use_da_vis2:
-                self.manual_backward(backward_loss)  # backward vis1 and vis2 together
-
+        if self.use_da_vis1 or self.use_da_vis2:
+            self.manual_backward(backward_loss)  # backward vis1 and vis2 together
+            if self.grad_clip is not None:
+                torch.nn.utils.clip_grad_norm_(self.perceiver.parameters(), self.grad_clip)
+        if batch_idx % n_critic == 0 and batch_idx >= self.n_early_d_steps:
             if self.use_da_vis1:
                 g_vis1_opt.step()
             if self.use_da_vis2:
